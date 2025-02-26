@@ -1,0 +1,13 @@
+# Python関連
+__pycache__/
+*.pyc
+*.pyo
+
+# Env
+.env
+
+# DBファイル (SQLiteなど)
+*.db
+
+# macOS
+.DS_Store
