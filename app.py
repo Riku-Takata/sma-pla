@@ -21,6 +21,8 @@ def create_app():
 
     return app
 
+# Gunicorn用にappをトップレベルで定義
+app = create_app()
+
 if __name__ == "__main__":
-    app = create_app()
-    app.run(host="0.0.0.0", port=5000, debug=app.config["DEBUG"])
+    app.run(host="0.0.0.0", port=5001, debug=app.config["DEBUG"])

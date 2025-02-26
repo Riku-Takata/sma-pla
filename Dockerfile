@@ -1,23 +1,38 @@
-# ベースイメージ (Python 3.10を例示)
-FROM python:3.10-slim
+# ビルドステージ
+FROM python:3.12-slim AS builder
 
-# アプリの作業ディレクトリ
+# 作業ディレクトリを設定
 WORKDIR /app
 
-# パッケージインストールに必要なファイルのみ先行コピー
+# システムパッケージを更新し、必要最低限のツールをインストール
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# requirements.txtをコピーして依存関係をインストール
 COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
 
-# ライブラリのインストール
-RUN pip install --no-cache-dir -r requirements.txt
+# 最終ステージ（軽量イメージ）
+FROM python:3.12-slim
 
-# アプリ本体をコピー
+# 作業ディレクトリを設定
+WORKDIR /app
+
+# ビルドステージからインストール済みのライブラリをコピー
+COPY --from=builder /root/.local /root/.local
+
+# アプリのソースコードをコピー
 COPY . .
 
-# Flaskのポート
-EXPOSE 5000
+# PATHを更新してpipインストールしたものを利用可能に
+ENV PATH=/root/.local/bin:$PATH
 
-# 環境変数が必要ならDockerfile上でも設定可能 (例: デバッグ用)
-# ENV DEBUG=true
+# Flaskのデフォルトポートを公開
+EXPOSE 5001
 
-# コンテナ起動時に実行されるコマンド
-CMD ["python", "app.py"]
+# 本番環境向けにGunicornを使用（開発時はコメントアウト可能）
+CMD ["gunicorn", "--bind", "0.0.0.0:5001", "app:app"]
+
+# 開発用にFlaskのビルトインサーバーを使いたい場合は以下をCMDとして使用
+# CMD ["flask", "run", "--host=0.0.0.0"]
