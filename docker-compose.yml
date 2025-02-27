@@ -1,0 +1,32 @@
+version: '3'
+
+services:
+  web:
+    build: .
+    ports:
+      - "5001:5001"
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=development
+    volumes:
+      - .:/app
+    restart: always
+    depends_on:
+      - ngrok
+    networks:
+      - app-network
+
+  ngrok:
+    image: wernight/ngrok
+    ports:
+      - "4040:4040"
+    environment:
+      - NGROK_AUTH=${NGROK_AUTH_TOKEN}
+      - NGROK_PORT=web:5001
+      - NGROK_REGION=ap
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

@@ -5,7 +5,7 @@ from config import Config
 from db import db
 from models import User, UserPlatformLink
 from handlers.slack_handler import slack_bp
-from handlers.line_handler import register_line_handler
+from archive.line_handler import register_line_handler
 from routes.oauth_routes import register_oauth_routes
 
 def create_app():
