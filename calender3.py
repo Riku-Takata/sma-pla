@@ -20,6 +20,9 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+import openai
+import re
+import json
 
 # タイムゾーンを指定
 TZ = pytz.timezone("Asia/Tokyo")
@@ -30,6 +33,87 @@ CREDENTIALS_FILE = "client_secret.json"
 
 # スコープを設定
 SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+# OpenAI API キーの設定
+# Google Colab で実行する場合、以下の方法でAPIキーを設定できます
+# 環境変数から読み込む場合:
+# openai.api_key = os.environ.get("OPENAI_API_KEY")
+# または直接設定する場合:
+# openai.api_key = "your-api-key-here"  # 実際のキーに置き換えてください
+
+def setup_openai_api():
+    """OpenAI API キーのセットアップ"""
+    if not openai.api_key:
+        api_key = input("🔑 OpenAI API キーを入力してください: ").strip()
+        openai.api_key = api_key
+        # Colabでは環境変数も設定しておくと便利
+        os.environ["OPENAI_API_KEY"] = api_key
+    print("✅ OpenAI API キーを設定しました")
+
+
+def extract_event_info(text):
+    """OpenAI APIを使用して文章から予定情報を抽出する"""
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": """
+                あなたは予定情報を抽出する専門家です。
+                文章から以下の情報を抽出し、JSON形式で返してください:
+                - summary: イベントの名前またはタイトル。文章から適切なタイトルを推測してください。必ず設定してください。
+                - date: YYYY-MM-DD形式の日付
+                - time: HH:MM形式の開始時間
+                - duration: 分単位のイベント時間
+                - location: イベントの場所
+                - description: イベントの説明や詳細
+                - all_day: 終日イベントかどうかのフラグ (true/false)
+
+                日付や時間が明示的に示されていない場合は、文脈から推測してください。
+                今日・明日・明後日などの相対的な日付は、現在の日付（""" + datetime.datetime.now(TZ).strftime("%Y-%m-%d") + """）から計算してください。
+                もし予定の種類が会議、面談、打ち合わせなどであれば、デフォルトの所要時間は60分と設定してください。
+                明確な場所が指定されていない場合は、「オフィス」や「会議室」などの妥当な場所を設定してください。
+                終日イベントに関する言及があれば、all_dayをtrueに設定してください。
+                JSONのみを返してください。
+                """},
+                {"role": "user", "content": text}
+            ],
+            response_format={"type": "json_object"}
+        )
+
+        # レスポンスからJSONを抽出
+        result = response.choices[0].message.content
+        return result
+    except Exception as e:
+        print(f"❌ OpenAI APIエラー: {e}")
+        return None
+
+
+def analyze_user_response(response_text):
+    """OpenAI APIを使用してユーザーの応答を肯定的か否定的か分析する"""
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": """
+                あなたはユーザーの応答を分析する専門家です。
+                ユーザーの応答が肯定的（同意、承諾）か否定的（拒否、不同意）かを判断し、JSONで返してください。
+                例えば「いいよ」「OK」「大丈夫」「了解」などは肯定的、「ダメ」「無理」「別の日がいい」などは否定的です。
+                応答が曖昧な場合は、より安全な「否定的」と判断してください。
+                
+                以下の形式のJSONを返してください：
+                {"is_affirmative": true/false, "confidence": 0-100}
+                """},
+                {"role": "user", "content": f"ユーザーの応答: {response_text}"}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        return result
+    except Exception as e:
+        print(f"❌ OpenAI 応答分析エラー: {e}")
+        # エラーの場合は安全のため否定的と判断
+        return {"is_affirmative": False, "confidence": 0}
 
 
 def get_calendar_service():
@@ -70,12 +154,39 @@ def parse_event_time(event_time):
     if 'dateTime' in event_time:
         return datetime.datetime.fromisoformat(event_time['dateTime']).astimezone(TZ)
     elif 'date' in event_time:
-        return TZ.localize(datetime.datetime.strptime(event_time['date'], "%Y-%m-%d"))
+        # 終日イベントの場合、開始時刻は指定日の0時、終了時刻は翌日の0時
+        date_obj = datetime.datetime.strptime(event_time['date'], "%Y-%m-%d")
+        return TZ.localize(date_obj)
     return None
 
 
+def check_all_day_event_conflict(all_day_events, start_time, end_time):
+    """終日イベントと指定した時間帯が重複するかチェック"""
+    conflicts = []
+
+    # 開始日と終了日を日付オブジェクトとして取得
+    start_date = start_time.date()
+    end_date = end_time.date()
+
+    for event in all_day_events:
+        event_start = parse_event_time(event['start'])
+        event_end = parse_event_time(event['end'])
+
+        if event_start and event_end:
+            event_start_date = event_start.date()
+            # 終日イベントの終了日は通常、次の日を指すため1日引く
+            event_end_date = (event_end - datetime.timedelta(days=1)).date()
+
+            # 予定が重複しているかチェック
+            if max(start_date, event_start_date) <= min(end_date, event_end_date):
+                conflicts.append((event.get('summary', '（無題の予定）'), event_start, event_end, event))
+
+    return conflicts
+
+
 def find_conflicting_events(service, start_time, end_time):
-    """指定した時間帯に重複する予定を検索"""
+    """指定した時間帯に重複する予定を検索（終日イベント対応）"""
+    # 通常のイベントを検索
     events_result = service.events().list(
         calendarId='primary',
         timeMin=start_time.astimezone(pytz.UTC).isoformat(),
@@ -86,8 +197,20 @@ def find_conflicting_events(service, start_time, end_time):
 
     events = events_result.get('items', [])
     conflicts = []
+    all_day_conflicts = []
+
+    # 終日イベントと通常イベントを分離
+    all_day_events = []
+    regular_events = []
 
     for event in events:
+        if 'date' in event.get('start', {}):
+            all_day_events.append(event)
+        else:
+            regular_events.append(event)
+
+    # 通常イベントとの重複をチェック
+    for event in regular_events:
         event_start = parse_event_time(event['start'])
         event_end = parse_event_time(event['end'])
         event_title = event.get('summary', '（無題の予定）')
@@ -98,87 +221,227 @@ def find_conflicting_events(service, start_time, end_time):
             (end_time > event_start and end_time <= event_end) or
             (start_time <= event_start and end_time >= event_end)
         ):
-            conflicts.append((event_title, event_start, event_end))
+            conflicts.append((event_title, event_start, event_end, event))
 
-    return conflicts
+    # 終日イベントとの重複をチェック
+    all_day_conflicts = check_all_day_event_conflict(all_day_events, start_time, end_time)
 
-
-def find_next_available_time(service, start_time, duration_minutes):
-    """次に空いている時間を探す"""
-    events_result = service.events().list(
-        calendarId='primary',
-        timeMin=start_time.astimezone(pytz.UTC).isoformat(),
-        timeMax=(start_time + datetime.timedelta(days=1)).astimezone(pytz.UTC).isoformat(),
-        singleEvents=True,
-        orderBy='startTime'
-    ).execute()
-
-    events = events_result.get('items', [])
-
-    if not events:
-        return start_time
-
-    current_time = start_time
-    for event in events:
-        event_start = parse_event_time(event['start'])
-        event_end = parse_event_time(event['end'])
-
-        if event_start and event_end:
-            if current_time + datetime.timedelta(minutes=duration_minutes) <= event_start:
-                return current_time
-            current_time = event_end
-
-    return current_time
+    return conflicts, all_day_conflicts
 
 
-def add_event(service, summary, location, description, start_time, end_time):
-    """イベントをカレンダーに追加する"""
+def find_next_available_time(service, start_time, duration_minutes, max_days=7):
+    """次に空いている時間を探す（複数日にわたって検索）"""
+    current_day = start_time.replace(hour=9, minute=0)  # 当日の勤務開始時間
+    end_search = start_time + datetime.timedelta(days=max_days)  # 最大で1週間先まで検索
+
+    while current_day < end_search:
+        # 一日の勤務時間を9:00-18:00とする
+        day_start = current_day
+        day_end = current_day.replace(hour=18, minute=0)
+
+        # 現在の日の予定を取得
+        events_result = service.events().list(
+            calendarId='primary',
+            timeMin=day_start.astimezone(pytz.UTC).isoformat(),
+            timeMax=day_end.astimezone(pytz.UTC).isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+
+        events = events_result.get('items', [])
+
+        # 終日イベントを取得
+        all_day_events = []
+        for event in events:
+            if 'date' in event.get('start', {}):
+                all_day_events.append(event)
+
+        # この日が終日イベントで埋まっている場合は次の日へ
+        all_day_conflicts = check_all_day_event_conflict(all_day_events, day_start, day_end)
+        if all_day_conflicts and len(all_day_conflicts) > 0:
+            current_day = (current_day + datetime.timedelta(days=1)).replace(hour=9, minute=0)
+            continue
+
+        # 通常イベントを時間順にソート
+        regular_events = [e for e in events if 'dateTime' in e.get('start', {})]
+        regular_events.sort(key=lambda x: parse_event_time(x['start']))
+
+        # 空き時間を探す
+        current_time = max(day_start, start_time) if current_day.date() == start_time.date() else day_start
+
+        # 各イベント間の空き時間をチェック
+        for event in regular_events:
+            event_start = parse_event_time(event['start'])
+            event_end = parse_event_time(event['end'])
+
+            if event_start and event_end:
+                # 現在時間からイベント開始までに十分な空きがあるか
+                if (event_start - current_time).total_seconds() / 60 >= duration_minutes:
+                    return current_time
+
+                # 次のチェック時間をイベント終了後に設定
+                current_time = max(current_time, event_end)
+
+        # 最後のイベント後に時間が残っているか
+        if (day_end - current_time).total_seconds() / 60 >= duration_minutes:
+            return current_time
+
+        # 次の日の勤務開始時間に設定
+        current_day = (current_day + datetime.timedelta(days=1)).replace(hour=9, minute=0)
+
+    # デフォルトとして1週間後の同じ時間を返す
+    return start_time + datetime.timedelta(days=7)
+
+
+# 部分的な修正 - add_eventメソッドの改善されたバージョン
+
+def add_event(service, summary, location, description, start_time, end_time, is_all_day=False):
+    """イベントをカレンダーに追加する（終日イベント対応）"""
     print("\n📅 追加する予定の詳細:")
     print(f"  🏷 タイトル: {summary}")
     print(f"  📍 場所: {location}")
     print(f"  📝 説明: {description}")
-    print(f"  ⏰ 開始: {start_time}")
-    print(f"  ⏳ 終了: {end_time}")
+
+    if is_all_day:
+        print(f"  📆 終日イベント: {start_time.strftime('%Y-%m-%d')}")
+    else:
+        print(f"  ⏰ 開始: {start_time.strftime('%Y-%m-%d %H:%M')}")
+        print(f"  ⏳ 終了: {end_time.strftime('%Y-%m-%d %H:%M')}")
 
     # 重複する予定を取得
-    conflicts = find_conflicting_events(service, start_time, end_time)
+    regular_conflicts, all_day_conflicts = find_conflicting_events(service, start_time, end_time)
+    already_confirmed = False  # 既に確認済みかどうかを追跡するフラグ
+    schedule_changed = False   # スケジュールが変更されたかを追跡するフラグ
 
-    if conflicts:
+    # 終日イベントとの競合を先に処理
+    if all_day_conflicts:
+        print("\n⚠ **この日には以下の終日予定が登録されています！**")
+        for title, c_start, c_end, _ in all_day_conflicts:
+            print(f"  📆 {title}（終日イベント: {c_start.strftime('%Y-%m-%d')}）")
+
+        # 終日イベントとの競合時の特別なフロー
+        choice = input("\nこの終日予定と重複していますが、それでもこの予定を追加しますか？ (y/n): ").strip().lower()
+        if choice == 'y':
+            # ユーザーが了承したので、そのまま追加処理へ進む
+            already_confirmed = True  # 確認済みとしてマーク
+            pass
+        else:
+            # 別の日時を提案
+            print("\n別の時間帯を探します...")
+            suggested_time = find_next_available_time(service, start_time, (end_time - start_time).seconds // 60)
+            suggested_end = suggested_time + datetime.timedelta(minutes=(end_time - start_time).seconds // 60)
+
+            # より自然なリスケ依頼のメッセージを生成
+            if suggested_time.date() == start_time.date():
+                message = f"\n🕒 同じ日の{suggested_time.strftime('%H:%M')}からでもよろしいでしょうか？"
+            else:
+                weekday_jp = ["月", "火", "水", "木", "金", "土", "日"][suggested_time.weekday()]
+                message = f"\n📆 {suggested_time.strftime('%m月%d日')}({weekday_jp})の{suggested_time.strftime('%H:%M')}からでもよろしいでしょうか？"
+
+            choice = input(f"{message} ").strip()
+
+            # OpenAIを使ってユーザーの自然言語応答を解析
+            analysis = analyze_user_response(choice)
+
+            if analysis["is_affirmative"] and analysis["confidence"] > 50:
+                print(f"✅ 日時変更案を承認しました。")
+                start_time = suggested_time
+                end_time = suggested_end
+                schedule_changed = True  # スケジュールが変更されたことをマーク
+                # 新しい時間で再度競合チェック
+                regular_conflicts, all_day_conflicts = find_conflicting_events(service, start_time, end_time)
+            else:
+                print("❌ 予定の追加をキャンセルしました。")
+                return None
+
+    # 通常イベントとの競合処理
+    if regular_conflicts:
         print("\n⚠ **この時間帯には以下の予定と重複しています！**")
-        for title, c_start, c_end in conflicts:
+        for title, c_start, c_end, _ in regular_conflicts:
             print(f"  📅 {title}（{c_start.strftime('%Y-%m-%d %H:%M')} 〜 {c_end.strftime('%H:%M')}）")
 
         suggested_time = find_next_available_time(service, start_time, (end_time - start_time).seconds // 60)
-        print(f"\n🕒 代わりに {suggested_time.strftime('%Y-%m-%d %H:%M')} に予定を追加できます。")
-        choice = input("この時間で予定を追加しますか？ (y/n): ").strip().lower()
-        if choice != 'y':
+        suggested_end = suggested_time + datetime.timedelta(minutes=(end_time - start_time).seconds // 60)
+
+        # より自然なリスケ依頼のメッセージを生成
+        if suggested_time.date() == start_time.date():
+            duration_min = (suggested_end - suggested_time).seconds // 60
+            message = f"\n🕒 同じ日の{suggested_time.strftime('%H:%M')}から{duration_min}分間でよろしいでしょうか？"
+        else:
+            weekday_jp = ["月", "火", "水", "木", "金", "土", "日"][suggested_time.weekday()]
+            message = f"\n📆 {suggested_time.strftime('%m月%d日')}({weekday_jp})の{suggested_time.strftime('%H:%M')}からに変更してもよろしいでしょうか？"
+
+        choice = input(f"{message} ").strip()
+
+        # OpenAIを使ってユーザーの自然言語応答を解析
+        analysis = analyze_user_response(choice)
+
+        if analysis["is_affirmative"] and analysis["confidence"] > 50:
+            print(f"✅ 日時変更案を承認しました。")
+            start_time = suggested_time
+            end_time = suggested_end
+            schedule_changed = True  # スケジュールが変更されたことをマーク
+        else:
             print("❌ 予定の追加をキャンセルしました。")
             return None
-        else:
-            start_time = suggested_time
-            end_time = start_time + datetime.timedelta(minutes=(end_time - start_time).seconds // 60)
 
-    else:
+    # スケジュールが変更された場合は、変更後の予定詳細を表示して最終確認
+    if schedule_changed:
+        print("\n📅 変更後の予定詳細:")
+        print(f"  🏷 タイトル: {summary}")
+        print(f"  📍 場所: {location}")
+        print(f"  📝 説明: {description}")
+
+        if is_all_day:
+            print(f"  📆 終日イベント: {start_time.strftime('%Y-%m-%d')}")
+        else:
+            print(f"  ⏰ 開始: {start_time.strftime('%Y-%m-%d %H:%M')}")
+            print(f"  ⏳ 終了: {end_time.strftime('%Y-%m-%d %H:%M')}")
+        
+        # 変更後の最終確認
+        final_choice = input("\n上記の変更された予定を追加しますか？ (y/n): ").strip().lower()
+        if final_choice != 'y':
+            print("❌ 予定の追加をキャンセルしました。")
+            return None
+
+    # 確認が済んでいない場合のみ最終確認を行う
+    elif not already_confirmed:
         choice = input("\nこの予定を追加しますか？ (y/n): ").strip().lower()
         if choice != 'y':
             print("❌ 予定の追加をキャンセルしました。")
             return None
 
+    # イベントの作成（終日イベント対応）
     event = {
         'summary': summary,
         'location': location,
         'description': description,
-        'start': {
+    }
+
+    if is_all_day:
+        # 終日イベントの場合
+        end_date = (start_time + datetime.timedelta(days=1)).date()  # 終了日は次の日
+        event['start'] = {
+            'date': start_time.strftime('%Y-%m-%d'),
+            'timeZone': 'Asia/Tokyo',
+        }
+        event['end'] = {
+            'date': end_date.strftime('%Y-%m-%d'),
+            'timeZone': 'Asia/Tokyo',
+        }
+    else:
+        # 通常イベントの場合
+        event['start'] = {
             'dateTime': start_time.isoformat(),
             'timeZone': 'Asia/Tokyo',
-        },
-        'end': {
+        }
+        event['end'] = {
             'dateTime': end_time.isoformat(),
             'timeZone': 'Asia/Tokyo',
-        },
-        'reminders': {
-            'useDefault': True,
-        },
+        }
+
+    event['reminders'] = {
+        'useDefault': True,
     }
 
     try:
@@ -189,31 +452,171 @@ def add_event(service, summary, location, description, start_time, end_time):
         return None
 
 
+def handle_missing_event_info(event_info):
+    """不足している予定情報を対話的に補完する"""
+    # 文字列からJSONを解析
+    if isinstance(event_info, str):
+        try:
+            event_info = json.loads(event_info)
+        except:
+            print("❌ JSONの解析に失敗しました。デフォルト値を使用します。")
+            event_info = {}
+
+    # デフォルト値を設定
+    if not event_info.get('summary'):
+        event_info['summary'] = "予定"  # デフォルトのタイトル
+
+    if not event_info.get('date'):
+        today = datetime.datetime.now(TZ).strftime("%Y-%m-%d")
+        print(f"📅 日付が指定されていないため、今日（{today}）を使用します。")
+        event_info['date'] = today
+
+    # 終日イベントの設定
+    is_all_day = event_info.get('all_day', False)
+    if isinstance(is_all_day, str):
+        is_all_day = is_all_day.lower() in ('true', 'yes', '1')
+    event_info['all_day'] = is_all_day
+
+    # 終日イベントでない場合は時間設定
+    if not is_all_day:
+        if not event_info.get('time'):
+            now = datetime.datetime.now(TZ)
+            # 30分単位に切り上げ
+            if now.minute >= 30:
+                next_hour = (now + datetime.timedelta(hours=1)).replace(minute=0)
+            else:
+                next_hour = now.replace(minute=30)
+            default_time = next_hour.strftime("%H:%M")
+            print(f"⏰ 時間が指定されていないため、{default_time}を使用します。")
+            event_info['time'] = default_time
+
+        if not event_info.get('duration') or int(event_info.get('duration', 0)) <= 0:
+            print("⌛ 所要時間が指定されていないため、60分を使用します。")
+            event_info['duration'] = 60
+
+    if not event_info.get('location'):
+        event_info['location'] = "オフィス"  # デフォルトの場所
+        print(f"📍 場所が指定されていないため、「{event_info['location']}」を使用します。")
+
+    if not event_info.get('description'):
+        event_info['description'] = f"{event_info['summary']}の予定"  # デフォルトの説明
+
+    return event_info
+
+
 # メインプログラム
-try:
-    print("🔄 Google Calendarサービスに接続中...")
-    service = get_calendar_service()
+def main():
+    try:
+        # OpenAI API キーのセットアップ
+        setup_openai_api()
 
-    print("✅ Google カレンダー API に接続しました！")
+        print("🔄 Google Calendarサービスに接続中...")
+        service = get_calendar_service()
+        print("✅ Google カレンダー API に接続しました！")
 
+        # ユーザーからの入力（自然言語で直接入力）
+        text = input("📄 予定の詳細を自由に入力してください: ").strip()
+        print("🧠 OpenAIで予定情報を解析中...")
+        event_info_json = extract_event_info(text)
+
+        if event_info_json:
+            print(f"📊 抽出された予定情報: {event_info_json}")
+            event_info = json.loads(event_info_json)
+
+            # 不足している情報を自動補完
+            event_info = handle_missing_event_info(event_info)
+
+            # 終日イベントかどうかをチェック
+            is_all_day = event_info.get('all_day', False)
+
+            if is_all_day:
+                # 終日イベントの場合
+                start_date = datetime.datetime.strptime(event_info['date'], "%Y-%m-%d")
+                start = TZ.localize(start_date)
+                end = start  # 終日イベントの場合、APIで自動的に次の日が終了日になる
+
+                # イベント追加
+                created_event = add_event(
+                    service,
+                    event_info['summary'],
+                    event_info['location'],
+                    event_info['description'],
+                    start,
+                    end,
+                    is_all_day=True
+                )
+            else:
+                # 通常イベントの場合
+                try:
+                    start = datetime.datetime.strptime(f"{event_info['date']} {event_info['time']}", "%Y-%m-%d %H:%M")
+                    start = TZ.localize(start)
+                    duration = int(event_info['duration'])
+                    end = start + datetime.timedelta(minutes=duration)
+
+                    # イベント追加
+                    created_event = add_event(
+                        service,
+                        event_info['summary'],
+                        event_info['location'],
+                        event_info['description'],
+                        start,
+                        end,
+                        is_all_day=False
+                    )
+                except Exception as e:
+                    print(f"❌ 日時の解析に失敗しました: {e}")
+                    print("手動で情報を入力します。")
+                    manual_input(service)
+                    return
+
+            if created_event:
+                print(f"✅ イベントが作成されました: {created_event['htmlLink']}")
+        else:
+            print("❌ 予定情報の抽出に失敗しました。手動で入力します。")
+            manual_input(service)
+
+    except Exception as e:
+        print(f"❌ 予期しないエラーが発生しました: {e}")
+
+
+def manual_input(service):
+    """手動で予定情報を入力する"""
     date_str = input("📅 予定の日付を YYYY-MM-DD 形式で入力してください: ")
-    time_str = input("⏰ 予定の開始時間を HH:MM 形式で入力してください: ")
 
-    start = datetime.datetime.strptime(date_str + " " + time_str, "%Y-%m-%d %H:%M")
-    start = TZ.localize(start)
+    # 終日イベントかどうかを確認
+    is_all_day = input("📆 この予定は終日イベントですか？ (y/n): ").strip().lower() == 'y'
 
-    duration = int(input("⌛ 予定の長さ（分単位）を入力してください: "))
-    end = start + datetime.timedelta(minutes=duration)
+    if is_all_day:
+        # 終日イベント
+        start = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        start = TZ.localize(start)
+        end = start  # 終日イベントの場合、APIで自動的に次の日が終了日になる
+    else:
+        # 通常イベント
+        time_str = input("⏰ 予定の開始時間を HH:MM 形式で入力してください: ")
+        start = datetime.datetime.strptime(date_str + " " + time_str, "%Y-%m-%d %H:%M")
+        start = TZ.localize(start)
 
-    event_summary = "会議"
-    event_location = "オフィス"
-    event_description = "重要な打ち合わせ"
+        duration = int(input("⌛ 予定の長さ（分単位）を入力してください: "))
+        end = start + datetime.timedelta(minutes=duration)
 
-    created_event = add_event(service, event_summary, event_location, event_description, start, end)
+    event_summary = input("🏷 予定のタイトルを入力してください: ") or "会議"
+    event_location = input("📍 予定の場所を入力してください: ") or "オフィス"
+    event_description = input("📝 予定の説明を入力してください: ") or "自動追加された予定"
+
+    created_event = add_event(
+        service,
+        event_summary,
+        event_location,
+        event_description,
+        start,
+        end,
+        is_all_day=is_all_day
+    )
 
     if created_event:
         print(f"✅ イベントが作成されました: {created_event['htmlLink']}")
 
-except Exception as e:
-    print(f"❌ 予期しないエラーが発生しました: {e}")
 
+if __name__ == "__main__":
+    main()
