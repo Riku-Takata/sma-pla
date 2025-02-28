@@ -1,41 +1,32 @@
 import os
+import pickle
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import pytz
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from models import User, db
 
-# Google APIの設定
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5001")
-OAUTH_REDIRECT_URI = f"{FRONTEND_URL}/oauth/google/callback"
-
-# スコープ設定
+# スコープを設定
 SCOPES = [
     'https://www.googleapis.com/auth/calendar',
-    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/calendar.events'
 ]
 
+# トークンの保存先
+TOKEN_PATH = "token.pickle"
+CREDENTIALS_FILE = "client_secret.json"
+
 def create_oauth_flow():
-    """OAuth認証フローを作成する"""
-    client_config = {
-        "web": {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [OAUTH_REDIRECT_URI],
-        }
-    }
-    
-    return Flow.from_client_config(
-        client_config, 
-        scopes=SCOPES, 
-        redirect_uri=OAUTH_REDIRECT_URI
+    """デスクトップアプリ用のOAuth認証フローを作成する"""
+    flow = InstalledAppFlow.from_client_secrets_file(
+        CREDENTIALS_FILE, 
+        scopes=SCOPES
     )
+    flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+    return flow
 
 def get_authorization_url():
     """
@@ -47,8 +38,7 @@ def get_authorization_url():
     flow = create_oauth_flow()
     auth_url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='true',
-        prompt='consent',
+        prompt='consent'
     )
     
     return auth_url, state
@@ -64,8 +54,16 @@ def exchange_code_for_token(code):
         google.oauth2.credentials.Credentials: 認証情報
     """
     flow = create_oauth_flow()
+    
+    # トークン交換
     flow.fetch_token(code=code)
-    return flow.credentials
+    credentials = flow.credentials
+    
+    # トークンをピクルファイルに保存
+    with open(TOKEN_PATH, 'wb') as token:
+        pickle.dump(credentials, token)
+    
+    return credentials
 
 def get_credentials_from_user(user_id):
     """
@@ -78,36 +76,29 @@ def get_credentials_from_user(user_id):
         google.oauth2.credentials.Credentials or None: 認証情報またはNone
         str or None: エラーメッセージまたはNone
     """
-    user = User.query.get(user_id)
-    if not user:
-        return None, "ユーザーが見つかりません"
+    # トークンファイルが存在するか確認
+    if os.path.exists(TOKEN_PATH):
+        with open(TOKEN_PATH, 'rb') as token:
+            credentials = pickle.load(token)
+        
+        # トークンの有効性をチェック
+        if credentials and credentials.valid:
+            return credentials, None
+        
+        # 期限切れの場合はリフレッシュ
+        if credentials and credentials.expired and credentials.refresh_token:
+            try:
+                credentials.refresh(Request())
+                
+                # 更新したトークンを再保存
+                with open(TOKEN_PATH, 'wb') as token:
+                    pickle.dump(credentials, token)
+                
+                return credentials, None
+            except Exception as e:
+                return None, f"トークンの更新に失敗しました: {str(e)}"
     
-    if not user.google_refresh_token:
-        return None, "Googleアカウントと連携されていません"
-    
-    # 認証情報を作成
-    credentials = Credentials(
-        token=user.google_access_token,
-        refresh_token=user.google_refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=GOOGLE_CLIENT_ID,
-        client_secret=GOOGLE_CLIENT_SECRET,
-        scopes=SCOPES
-    )
-    
-    # トークンの有効期限が切れていたら更新
-    if user.google_token_expiry and user.google_token_expiry < datetime.utcnow():
-        try:
-            credentials.refresh(None)
-            
-            # DBにトークン情報を更新
-            user.google_access_token = credentials.token
-            user.google_token_expiry = datetime.utcnow() + timedelta(seconds=credentials.expires_in)
-            db.session.commit()
-        except Exception as e:
-            return None, f"トークンの更新に失敗しました: {str(e)}"
-    
-    return credentials, None
+    return None, "認証情報が見つかりません。再度認証してください。"
 
 def get_calendar_service(user_id):
     """

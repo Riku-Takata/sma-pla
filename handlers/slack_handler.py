@@ -10,12 +10,13 @@ from datetime import datetime, timedelta
 from slack_sdk import WebClient
 from slack_sdk.signature import SignatureVerifier
 from slack_sdk.errors import SlackApiError
+from flask import session
 
 from models import User, UserPlatformLink, db
 from utils.message_parser import parse_user_input_for_scheduling
 from utils.calendar_handler import (
     create_calendar_event, check_schedule_conflicts, 
-    get_authorization_url, find_next_available_time
+    get_authorization_url, find_next_available_time, exchange_code_for_token
 )
 
 # Slack API設定
