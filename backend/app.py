@@ -271,3 +271,35 @@ if __name__ == "__main__":
     # ローカル開発用の起動コード
     port = int(os.getenv('PORT', 5001))
     app.run(host="0.0.0.0", port=port, debug=app.config.get("DEBUG", False))
+
+"""
+Redisの設定と接続を管理するモジュール
+"""
+import os
+import redis
+
+def get_redis_client():
+    """
+    環境変数から設定を読み取り、Redisクライアントを作成する
+    
+    Returns:
+        redis.Redis: Redisクライアントインスタンス
+    """
+    try:
+        # 環境変数から接続情報を取得
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+        
+        # Redisクライアントを作成
+        redis_client = redis.from_url(redis_url)
+        
+        # 接続テスト
+        redis_client.ping()
+        
+        return redis_client
+    
+    except Exception as e:
+        print(f"Redis接続エラー: {e}")
+        return None
+
+# グローバル変数としてRedisクライアントを作成
+redis_client = get_redis_client()

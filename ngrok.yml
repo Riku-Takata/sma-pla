@@ -1,0 +1,6 @@
+version: '2'
+authtoken: ${NGROK_AUTH_TOKEN}
+tunnels:
+  web:
+    addr: web:5001
+    proto: https

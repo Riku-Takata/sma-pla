@@ -1,57 +1,69 @@
 services:
-  web:
-    build: .
-    ports:
-      - "5001:5001"
-    environment:
-      - FLASK_APP=app.py
-      - FLASK_ENV=development
-      - REDIS_URL=redis://redis:6379/0
-    volumes:
-      - .:/app
-    restart: always
-    depends_on:
-      - ngrok
-      - redis
-      - notification
-    networks:
-      - app-network
-
-  ngrok:
-    image: wernight/ngrok
-    ports:
-      - "4040:4040"
-    environment:
-      - NGROK_AUTH=${NGROK_AUTH_TOKEN}
-      - NGROK_PORT=web:5001
-      - --region=ap
-    networks:
-      - app-network
-
   redis:
     image: redis:alpine
     ports:
       - "6379:6379"
-    networks:
-      - app-network
     volumes:
       - redis-data:/data
+    networks:
+      - app-network
+    restart: always
+
+  web:
+    build: 
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    restart: always
+    networks:
+      - app-network
 
   notification:
-    build:
+    build: 
       context: .
-      dockerfile: Dockerfile.notification
+      dockerfile: frontend/Dockerfile
     ports:
       - "5002:5002"
+    env_file:
+      - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
       - BACKEND_URL=http://web:5001
     volumes:
-      - ./notification:/app
+      - ./frontend:/app
+    depends_on:
+      - redis
+      - web
+    restart: always
+    networks:
+      - app-network
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    ports:
+      - "4040:4040"
+    env_file:
+      - .env
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTH_TOKEN}
+    command: 
+      - "http"
+      - "web:5001"
+      - "--log"
+      - "stdout"
     networks:
       - app-network
     depends_on:
-      - redis
+      - web
 
 networks:
   app-network:
@@ -59,3 +71,4 @@ networks:
 
 volumes:
   redis-data:
+    driver: local
