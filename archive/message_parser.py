@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta
 import pytz
 import json
-from utils.openai_analyzer import analyze_conversation_with_openai
+from archive.openai_analyzer import analyze_conversation_with_openai
 
 # OpenAI APIを使用する場合の設定
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

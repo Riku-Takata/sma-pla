@@ -4,6 +4,7 @@ Googleカレンダーハンドラー
 """
 import os
 import json
+import logging
 from datetime import datetime, timedelta
 import pytz
 from google.oauth2.credentials import Credentials
@@ -15,6 +16,9 @@ from googleapiclient.errors import HttpError
 from src.models.user import User
 from src.utils.db import db
 from flask import current_app
+
+# ロギング設定
+logger = logging.getLogger(__name__)
 
 # スコープを設定
 SCOPES = [
@@ -50,21 +54,25 @@ def create_oauth_flow():
         not client_config.get('web', {}).get('token_uri')):
         raise ValueError("Invalid client configuration - missing required fields")
     
-    flow = Flow.from_client_config(
-        client_config,
-        scopes=SCOPES
-    )
-    
-    # リダイレクトURIの設定
-    if redirect_uri:
-        flow.redirect_uri = redirect_uri
-    elif flow.redirect_uri is None and len(client_config.get('web', {}).get('redirect_uris', [])) > 0:
-        flow.redirect_uri = client_config['web']['redirect_uris'][0]
-    else:
-        # デフォルトでOOB（ブラウザ外認証）を使用
-        flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
-    
-    return flow
+    try:
+        flow = Flow.from_client_config(
+            client_config,
+            scopes=SCOPES
+        )
+        
+        # リダイレクトURIの設定
+        if redirect_uri:
+            flow.redirect_uri = redirect_uri
+        elif flow.redirect_uri is None and len(client_config.get('web', {}).get('redirect_uris', [])) > 0:
+            flow.redirect_uri = client_config['web']['redirect_uris'][0]
+        else:
+            # デフォルトでOOB（ブラウザ外認証）を使用
+            flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+        
+        return flow
+    except Exception as e:
+        logger.error(f"OAuth認証フロー作成エラー: {e}", exc_info=True)
+        raise
 
 def get_authorization_url():
     """
@@ -80,10 +88,10 @@ def get_authorization_url():
             prompt='consent',
             include_granted_scopes='true'
         )
-        current_app.logger.debug(f"Generated auth URL: {auth_url[:100]}...")
+        logger.debug(f"認証URL生成: {auth_url[:100]}...")
         return auth_url, state
     except Exception as e:
-        current_app.logger.error(f"Error generating authorization URL: {e}")
+        logger.error(f"認証URL生成エラー: {e}", exc_info=True)
         raise
 
 def exchange_code_for_token(code):
@@ -115,11 +123,11 @@ def exchange_code_for_token(code):
             "expires_in": (credentials.expiry - datetime.utcnow()).total_seconds() if credentials.expiry else 3600
         }
         
-        current_app.logger.debug(f"Successfully exchanged code for tokens. Has refresh token: {bool(credentials.refresh_token)}")
+        logger.debug(f"トークン交換成功. リフレッシュトークンあり: {bool(credentials.refresh_token)}")
         return True, token_data
 
     except Exception as e:
-        current_app.logger.error(f"Error exchanging code for token: {e}")
+        logger.error(f"トークン交換エラー: {e}", exc_info=True)
         return False, f"{e}"
 
 def get_credentials_from_user(user_id):
@@ -138,7 +146,7 @@ def get_credentials_from_user(user_id):
     user = User.query.get(user_id)
     
     if not user or not user.google_refresh_token:
-        current_app.logger.warning(f"User {user_id} has no Google refresh token")
+        logger.warning(f"ユーザー {user_id} にGoogleリフレッシュトークンがありません")
         return None, "Googleアカウントと連携されていません。認証を行ってください。"
     
     try:
@@ -163,20 +171,20 @@ def get_credentials_from_user(user_id):
                     user.google_access_token = creds.token
                     user.google_token_expiry = creds.expiry
                     db.session.commit()
-                    current_app.logger.debug(f"Refreshed tokens for user: {user_id}")
+                    logger.debug(f"ユーザー {user_id} のトークンを更新しました")
                 except Exception as e:
                     # リフレッシュに失敗した場合、エラーを返す
-                    current_app.logger.error(f"Token refresh failed for user {user_id}: {e}")
+                    logger.error(f"ユーザー {user_id} のトークン更新に失敗: {e}", exc_info=True)
                     return None, f"トークンの更新に失敗しました: {str(e)}"
             else:
                 # refresh_tokenがない場合
-                current_app.logger.error(f"No refresh token available for user: {user_id}")
+                logger.error(f"ユーザー {user_id} にリフレッシュトークンがありません")
                 return None, "リフレッシュトークンがありません。再度認証してください。"
         
         return creds, None
     except Exception as e:
         # 全般的なエラー
-        current_app.logger.error(f"Error getting credentials for user {user_id}: {e}")
+        logger.error(f"ユーザー {user_id} の認証情報取得エラー: {e}", exc_info=True)
         return None, f"認証情報の構築に失敗しました: {str(e)}"
 
 def get_calendar_service(user_id):
@@ -187,7 +195,7 @@ def get_calendar_service(user_id):
         user_id (int): ユーザーID
     
     Returns:
-        (service, error)
+        (service, error): サービスオブジェクトとエラー文字列のタプル
     """
     credentials, error = get_credentials_from_user(user_id)
     if error:
@@ -197,90 +205,99 @@ def get_calendar_service(user_id):
         service = build('calendar', 'v3', credentials=credentials)
         return service, None
     except Exception as e:
-        current_app.logger.error(f"Error building calendar service for user {user_id}: {e}")
+        logger.error(f"ユーザー {user_id} のカレンダーサービス構築エラー: {e}", exc_info=True)
         return None, f"Google Calendar APIの初期化に失敗しました: {str(e)}"
 
-def create_calendar_event(user_id, schedule_info):
+def create_calendar_event(user_id, schedule_info, notify_user=True):
     """
     カレンダーに予定を登録する
     
     Args:
         user_id (int): ユーザーID
         schedule_info (dict): 予定情報
+        notify_user (bool): ユーザーにメール通知するか
         
     Returns:
         (success, result):
             success: True/False
             result: 成功時はイベントURL, 失敗時はエラーメッセージ
     """
-    service, error = get_calendar_service(user_id)
-    if error:
-        return False, error
-    
-    # タイムゾーンをJSTに統一
-    jst = pytz.timezone('Asia/Tokyo')
-    start_dt = schedule_info['start_datetime']
-    end_dt = schedule_info['end_datetime']
-    
-    if start_dt.tzinfo is None:
-        start_dt = jst.localize(start_dt)
-    else:
-        start_dt = start_dt.astimezone(jst)
-    
-    if end_dt.tzinfo is None:
-        end_dt = jst.localize(end_dt)
-    else:
-        end_dt = end_dt.astimezone(jst)
-    
-    # 終日イベントかどうか
-    is_all_day = schedule_info.get('is_all_day', False)
-    
-    # イベント作成
-    if is_all_day:
-        event_body = {
-            'summary': schedule_info['title'],
-            'location': schedule_info.get('location', ''),
-            'description': schedule_info.get('description', ''),
-            'start': {
-                'date': start_dt.date().isoformat(),
-                'timeZone': 'Asia/Tokyo',
-            },
-            'end': {
-                'date': (end_dt.date() + timedelta(days=1)).isoformat(),  # 終日イベントは終了日に+1日
-                'timeZone': 'Asia/Tokyo',
-            },
-            'reminders': {
-                'useDefault': True,
-            },
-        }
-    else:
-        event_body = {
-            'summary': schedule_info['title'],
-            'location': schedule_info.get('location', ''),
-            'description': schedule_info.get('description', ''),
-            'start': {
-                'dateTime': start_dt.isoformat(),
-                'timeZone': 'Asia/Tokyo',
-            },
-            'end': {
-                'dateTime': end_dt.isoformat(),
-                'timeZone': 'Asia/Tokyo',
-            },
-            'reminders': {
-                'useDefault': True,
-            },
-        }
-    
-    try:
-        created_event = service.events().insert(calendarId='primary', body=event_body).execute()
-        current_app.logger.info(f"Created calendar event: {created_event['id']} for user: {user_id}")
-        return True, created_event['htmlLink']
-    except HttpError as e:
-        current_app.logger.error(f"Calendar API error for user {user_id}: {e}")
-        return False, f"予定の登録に失敗しました: {str(e)}"
-    except Exception as e:
-        current_app.logger.error(f"Unexpected error creating event for user {user_id}: {e}")
-        return False, f"予期しないエラーが発生しました: {str(e)}"
+    # 最大3回のリトライを実施
+    for attempt in range(3):
+        try:
+            service, error = get_calendar_service(user_id)
+            if error:
+                return False, error
+            
+            # タイムゾーンをJSTに統一
+            jst = pytz.timezone('Asia/Tokyo')
+            start_dt = schedule_info['start_datetime']
+            end_dt = schedule_info['end_datetime']
+            
+            if start_dt.tzinfo is None:
+                start_dt = jst.localize(start_dt)
+            else:
+                start_dt = start_dt.astimezone(jst)
+            
+            if end_dt.tzinfo is None:
+                end_dt = jst.localize(end_dt)
+            else:
+                end_dt = end_dt.astimezone(jst)
+            
+            # 終日イベントかどうか
+            is_all_day = schedule_info.get('is_all_day', False)
+            
+            # イベント作成
+            event_body = {
+                'summary': schedule_info['title'],
+                'location': schedule_info.get('location', ''),
+                'description': schedule_info.get('description', ''),
+                'reminders': {
+                    'useDefault': True,
+                },
+            }
+            
+            # 通知設定
+            if not notify_user:
+                event_body['reminders'] = {
+                    'useDefault': False,
+                    'overrides': []
+                }
+            
+            if is_all_day:
+                # 終日イベントの場合
+                event_body['start'] = {
+                    'date': start_dt.date().isoformat(),
+                    'timeZone': 'Asia/Tokyo',
+                }
+                event_body['end'] = {
+                    'date': (end_dt.date() + timedelta(days=1)).isoformat(),  # 終日イベントは終了日に+1日
+                    'timeZone': 'Asia/Tokyo',
+                }
+            else:
+                # 通常イベントの場合
+                event_body['start'] = {
+                    'dateTime': start_dt.isoformat(),
+                    'timeZone': 'Asia/Tokyo',
+                }
+                event_body['end'] = {
+                    'dateTime': end_dt.isoformat(),
+                    'timeZone': 'Asia/Tokyo',
+                }
+            
+            created_event = service.events().insert(calendarId='primary', body=event_body).execute()
+            logger.info(f"カレンダーイベント作成: id={created_event['id']}, ユーザー={user_id}")
+            return True, created_event['htmlLink']
+            
+        except HttpError as e:
+            logger.error(f"Calendar API error for user {user_id} (attempt {attempt+1}/3): {e}")
+            if attempt == 2:  # 最終リトライ
+                return False, f"予定の登録に失敗しました: {str(e)}"
+            continue  # リトライ
+            
+        except Exception as e:
+            logger.error(f"ユーザー {user_id} のイベント作成で予期しないエラー: {e}", exc_info=True)
+            return False, f"予期しないエラーが発生しました: {str(e)}"
 
 def check_schedule_conflicts(user_id, start_datetime, end_datetime):
     """
@@ -327,17 +344,34 @@ def check_schedule_conflicts(user_id, start_datetime, end_datetime):
         for event in events:
             start = event['start'].get('dateTime', event['start'].get('date'))
             end = event['end'].get('dateTime', event['end'].get('date'))
+            
+            # 日時の解析
+            if 'date' in event['start']:
+                # 終日イベント
+                is_all_day = True
+                start_dt = event['start'].get('date')
+                end_dt = event['end'].get('date')
+            else:
+                # 通常イベント
+                is_all_day = False
+                start_dt = datetime.fromisoformat(start.replace('Z', '+00:00')).astimezone(jst).strftime('%Y-%m-%d %H:%M')
+                end_dt = datetime.fromisoformat(end.replace('Z', '+00:00')).astimezone(jst).strftime('%H:%M')
+                
+                if start_dt.split()[0] != end_dt.split()[0]:
+                    end_dt = datetime.fromisoformat(end.replace('Z', '+00:00')).astimezone(jst).strftime('%Y-%m-%d %H:%M')
+            
             conflicts.append({
                 'summary': event.get('summary', '（無題の予定）'),
-                'start': start,
-                'end': end,
+                'start': start_dt,
+                'end': end_dt,
                 'location': event.get('location', ''),
-                'html_link': event.get('htmlLink', '')
+                'html_link': event.get('htmlLink', ''),
+                'is_all_day': is_all_day
             })
         
         return True, conflicts
     except Exception as e:
-        current_app.logger.error(f"Error checking conflicts for user {user_id}: {e}")
+        logger.error(f"ユーザー {user_id} の予定重複チェックでエラー: {e}", exc_info=True)
         return str(e), []
 
 def find_next_available_time(user_id, start_time, duration_minutes, max_days=7):
@@ -355,7 +389,7 @@ def find_next_available_time(user_id, start_time, duration_minutes, max_days=7):
     """
     service, error = get_calendar_service(user_id)
     if error:
-        current_app.logger.error(f"Error getting calendar service: {error}")
+        logger.error(f"カレンダーサービス取得エラー: {error}")
         return None
     
     jst = pytz.timezone('Asia/Tokyo')
@@ -431,5 +465,5 @@ def find_next_available_time(user_id, start_time, duration_minutes, max_days=7):
         return start_time + timedelta(days=7)
     
     except Exception as e:
-        current_app.logger.error(f"Error finding next available time for user {user_id}: {e}")
+        logger.error(f"ユーザー {user_id} の空き時間検索エラー: {e}", exc_info=True)
         return None

@@ -4,12 +4,16 @@ Google認証のフローを提供します
 """
 from flask import Blueprint, request, redirect, session, jsonify, url_for, current_app, render_template
 import os
+import logging
 from datetime import datetime, timedelta
 from src.models.user import User, UserPlatformLink
 from src.utils.db import db
 from src.utils.calendar_handler import (
     get_authorization_url, exchange_code_for_token
 )
+
+# ロギング設定
+logger = logging.getLogger(__name__)
 
 def register_oauth_routes(app):
     """
@@ -43,7 +47,7 @@ def register_oauth_routes(app):
         # stateをセッションに保存
         session['oauth_state'] = state
         
-        current_app.logger.info(f"Starting Google OAuth flow for user_id: {user_id}")
+        logger.info(f"Google OAuth開始: user_id={user_id}, platform={platform_name}")
         
         # 認証ページにリダイレクト
         return redirect(auth_url)
@@ -61,18 +65,18 @@ def register_oauth_routes(app):
         
         # エラーがある場合はエラーページにリダイレクト
         if error:
-            current_app.logger.error(f"OAuth error: {error}")
+            logger.error(f"OAuth認証エラー: {error}")
             return redirect(url_for('auth_error', error=error))
         
         # 必須パラメータの確認
         if not code:
-            current_app.logger.error("No OAuth code received")
+            logger.error("OAuth認証コードがありません")
             return redirect(url_for('auth_error', error="認証コードがありません"))
         
         # stateの検証
         expected_state = session.get('oauth_state')
         if state != expected_state:
-            current_app.logger.error(f"State mismatch: expected {expected_state}, got {state}")
+            logger.error(f"State不一致: 期待={expected_state}, 実際={state}")
             return redirect(url_for('auth_error', error="セキュリティチェックに失敗しました"))
         
         try:
@@ -80,7 +84,7 @@ def register_oauth_routes(app):
             success, token_data = exchange_code_for_token(code)
             
             if not success:
-                current_app.logger.error(f"Token exchange failed: {token_data}")
+                logger.error(f"トークン交換失敗: {token_data}")
                 return redirect(url_for('auth_error', error=f"トークン取得に失敗: {token_data}"))
             
             # ユーザー情報を取得
@@ -98,11 +102,11 @@ def register_oauth_routes(app):
                 
                 if user_link:
                     user_id = user_link.user_id
-                    current_app.logger.info(f"Found user_id {user_id} from platform link")
+                    logger.info(f"プラットフォームリンクからユーザーID {user_id} を取得")
             
             # それでもユーザーIDがない場合は新規作成
             if not user_id:
-                current_app.logger.info("Creating new user from OAuth flow")
+                logger.info("OAuth認証からの新規ユーザー作成")
                 # 新規ユーザーを作成
                 user = User(
                     display_name="Google User",
@@ -124,7 +128,7 @@ def register_oauth_routes(app):
                 
                 db.session.commit()
                 user_id = user.id
-                current_app.logger.info(f"Created new user with id: {user_id}")
+                logger.info(f"新規ユーザー作成完了: ID={user_id}")
             else:
                 # 既存ユーザーの場合、トークン情報を更新
                 user = User.query.get(user_id)
@@ -133,7 +137,7 @@ def register_oauth_routes(app):
                     user.google_access_token = token_data.get("access_token")
                     user.google_token_expiry = datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 3600))
                     db.session.commit()
-                    current_app.logger.info(f"Updated tokens for user: {user_id}")
+                    logger.info(f"ユーザー {user_id} のトークンを更新")
             
             # セッションをクリア
             session.pop('oauth_user_id', None)
@@ -145,7 +149,7 @@ def register_oauth_routes(app):
             return redirect(url_for('auth_success'))
             
         except Exception as e:
-            current_app.logger.error(f"Error in OAuth callback: {e}")
+            logger.error(f"OAuth認証コールバックエラー: {e}", exc_info=True)
             return redirect(url_for('auth_error', error=str(e)))
     
     @oauth_bp.route('/google/token', methods=['POST'])
@@ -212,8 +216,11 @@ def register_oauth_routes(app):
             })
             
         except Exception as e:
-            current_app.logger.error(f"Error in token exchange API: {e}")
+            logger.error(f"トークン交換APIエラー: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 400
+    
+    # Blueprintをアプリケーションに登録
+    app.register_blueprint(oauth_bp)
     
     # 認証成功ページテンプレート
     @app.route('/auth_success')
@@ -227,6 +234,3 @@ def register_oauth_routes(app):
         """認証エラーページ"""
         error = request.args.get('error', '不明なエラー')
         return render_template('auth_error.html', error=error)
-    
-    # Blueprintをアプリケーションに登録
-    app.register_blueprint(oauth_bp)
