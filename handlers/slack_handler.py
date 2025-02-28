@@ -12,7 +12,7 @@ from slack_sdk.signature import SignatureVerifier
 from slack_sdk.errors import SlackApiError
 
 from models import User, UserPlatformLink, db
-from utils.nlp_parser import parse_schedule_from_text
+from utils.message_parser import parse_user_input_for_scheduling
 from utils.calendar_handler import (
     create_calendar_event, check_schedule_conflicts, 
     get_authorization_url, find_next_available_time
@@ -39,12 +39,20 @@ def verify_slack_request(request):
     if not SLACK_SIGNING_SECRET:
         print("Warning: SLACK_SIGNING_SECRET is not set. Request verification skipped.")
         return True
-        
-    return signature_verifier.is_valid_request(
-        body=request.get_data().decode('utf-8'),
-        timestamp=request.headers.get('X-Slack-Request-Timestamp', ''),
-        signature=request.headers.get('X-Slack-Signature', '')
-    )
+    
+    try:
+        # 最新のSDKの場合
+        return signature_verifier.is_valid(
+            request.get_data().decode('utf-8'),
+            request.headers.get('X-Slack-Request-Timestamp', ''),
+            request.headers.get('X-Slack-Signature', '')
+        )
+    except TypeError:
+        # 古いSDKバージョンの場合
+        return signature_verifier.is_valid_request(
+            request.get_data().decode('utf-8'), 
+            request.headers
+        )
 
 @slack_bp.route('/events', methods=['POST'])
 def slack_events():
@@ -54,6 +62,9 @@ def slack_events():
         return jsonify({"error": "Invalid request"}), 403
 
     data = request.json
+    
+    # デバッグログ
+    print(f"Received Slack event: {json.dumps(data)[:200]}...")
 
     # URL検証チャレンジ（Slack App設定時に必要）
     if data and data.get('type') == 'url_verification':
@@ -61,11 +72,39 @@ def slack_events():
 
     # イベントハンドリング
     if data and data.get('event'):
+        # イベントの重複処理を防ぐ
+        event_id = data.get('event_id', '')
+        if event_id in getattr(slack_events, 'processed_events', set()):
+            print(f"Ignoring duplicate event: {event_id}")
+            return jsonify({"status": "already processed"}), 200
+            
+        # 処理済みイベントを記録
+        if not hasattr(slack_events, 'processed_events'):
+            slack_events.processed_events = set()
+        slack_events.processed_events.add(event_id)
+        
+        # 最大100件のイベントIDを保持
+        if len(slack_events.processed_events) > 100:
+            slack_events.processed_events.pop()
+            
+        # Flask アプリのインスタンスを取得
+        from flask import current_app
+        app = current_app._get_current_object()
+            
         # バックグラウンドで処理するためにスレッドを起動
-        thread = threading.Thread(target=process_event, args=(data.get('event'),))
+        thread = threading.Thread(
+            target=process_event_with_app_context, 
+            args=(app, data.get('event'),)
+        )
         thread.start()
 
     return jsonify({"status": "ok"})
+
+# アプリケーションコンテキスト付きで実行する関数
+def process_event_with_app_context(app, event):
+    """アプリケーションコンテキスト内でイベントを処理する"""
+    with app.app_context():
+        process_event(event)
 
 @slack_bp.route('/command', methods=['POST'])
 def slack_commands():
@@ -86,10 +125,14 @@ def slack_commands():
 
     # /plan コマンドの処理
     if command == '/plan':
+        # Flask アプリのインスタンスを取得
+        from flask import current_app
+        app = current_app._get_current_object()
+        
         # バックグラウンドで処理するためにスレッドを起動
         thread = threading.Thread(
-            target=process_plan_command, 
-            args=(channel_id, user_id, text, trigger_id)
+            target=process_plan_command_with_app_context, 
+            args=(app, channel_id, user_id, text, trigger_id)
         )
         thread.start()
         
@@ -103,6 +146,12 @@ def slack_commands():
         "response_type": "ephemeral",
         "text": "不明なコマンドです。"
     })
+
+# アプリケーションコンテキスト付きで実行する関数
+def process_plan_command_with_app_context(app, channel_id, user_id, text, trigger_id):
+    """アプリケーションコンテキスト内でコマンドを処理する"""
+    with app.app_context():
+        process_plan_command(channel_id, user_id, text, trigger_id)
 
 @slack_bp.route('/interactive', methods=['POST'])
 def slack_interactive():
@@ -121,15 +170,25 @@ def slack_interactive():
     user_id = payload.get('user', {}).get('id')
     channel_id = payload.get('channel', {}).get('id')
     
+    # Flask アプリのインスタンスを取得
+    from flask import current_app
+    app = current_app._get_current_object()
+    
     # バックグラウンドで処理
     thread = threading.Thread(
-        target=process_interactive_action, 
-        args=(action_id, payload, user_id, channel_id)
+        target=process_interactive_action_with_app_context, 
+        args=(app, action_id, payload, user_id, channel_id)
     )
     thread.start()
     
     # 即時応答
     return jsonify({"response_action": "clear"})
+
+# アプリケーションコンテキスト付きで実行する関数
+def process_interactive_action_with_app_context(app, action_id, payload, user_id, channel_id):
+    """アプリケーションコンテキスト内でインタラクティブアクションを処理する"""
+    with app.app_context():
+        process_interactive_action(action_id, payload, user_id, channel_id)
 
 def process_event(event):
     """イベントを非同期で処理する"""
@@ -141,7 +200,7 @@ def process_event(event):
     # 現在はスラッシュコマンドでのみ会話履歴を取得
 
 def process_plan_command(channel_id, user_id, text, trigger_id):
-    """'/plan'コマンドを処理する"""
+    """'/plan'コマンドを処理する - 強化版"""
     try:
         # ユーザー情報の取得・作成
         user_link = UserPlatformLink.query.filter_by(
@@ -213,11 +272,18 @@ def process_plan_command(channel_id, user_id, text, trigger_id):
         # テキストが指定されている場合はそれを直接解析
         if text.strip():
             # 指定されたテキストから予定を解析
-            schedule_info = parse_schedule_from_text(text)
+            schedule_info = parse_user_input_for_scheduling(text)
             
-            if schedule_info['confidence'] >= 0.5 and schedule_info['start_datetime']:
+            if schedule_info and schedule_info.get('confidence', 0) >= 0.5:
                 # 予定情報が取得できた場合
                 show_schedule_confirmation(user.id, channel_id, user_id, schedule_info)
+                return
+            else:
+                slack_client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="テキストから予定情報を抽出できませんでした。具体的な日時などを含めてください。"
+                )
                 return
         
         # 最近の会話を取得
@@ -239,19 +305,24 @@ def process_plan_command(channel_id, user_id, text, trigger_id):
             sender = f"<@{msg.get('user', 'unknown')}>"
             combined_text += f"{sender}: {msg.get('text')}\n"
         
-        # 予定情報の解析
-        schedule_info = parse_schedule_from_text(combined_text)
+        # デバッグログ
+        print(f"解析対象のテキスト: {combined_text[:200]}...")
+        
+        # 予定情報の解析 - 強化版OpenAI解析を使用
+        schedule_info = parse_user_input_for_scheduling(combined_text)
         
         # 解析結果に応じた処理
-        if schedule_info['confidence'] >= 0.5 and schedule_info['start_datetime']:
+        if schedule_info and schedule_info.get('confidence', 0) >= 0.5:
             # 予定情報が取得できた場合
+            print(f"予定を検出: {schedule_info['title']}, 開始: {schedule_info['start_datetime']}, 信頼度: {schedule_info.get('confidence', 0)}")
             show_schedule_confirmation(user.id, channel_id, user_id, schedule_info)
         else:
             # 解析失敗時
+            confidence_msg = f"（信頼度: {schedule_info.get('confidence', 0) if schedule_info else 0}）"
             slack_client.chat_postEphemeral(
                 channel=channel_id,
                 user=user_id,
-                text="会話から予定情報を検出できませんでした。\n" + 
+                text=f"会話から予定情報を検出できませんでした。{confidence_msg}\n" + 
                      "具体的な予定を指定してみてください。例:\n" +
                      "`/plan 明日の15時から1時間、会議室でミーティング`"
             )
@@ -492,7 +563,7 @@ def show_schedule_confirmation(user_id, channel_id, slack_user_id, schedule_info
         ]
         
         # 場所があれば追加
-        if schedule_info['location']:
+        if schedule_info.get('location'):
             blocks[1]["fields"].append({
                 "type": "mrkdwn",
                 "text": f"*場所:*\n{schedule_info['location']}"
@@ -567,7 +638,7 @@ def register_calendar_event(user_id, schedule_info, channel_id, slack_user_id, f
             ]
             
             # 場所があれば追加
-            if schedule_info['location']:
+            if schedule_info.get('location'):
                 blocks[1]["fields"].append({
                     "type": "mrkdwn",
                     "text": f"*場所:*\n{schedule_info['location']}"

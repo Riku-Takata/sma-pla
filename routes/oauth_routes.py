@@ -15,7 +15,7 @@ def google_init():
     """Google OAuth認証フローを開始する"""
     # ユーザーIDを取得（セッションやクエリパラメータから）
     user_id = request.args.get('user_id')
-    platform_name = request.args.get('platform', 'web')
+    platform_name = request.args.get('platform', 'slack')
     platform_user_id = request.args.get('platform_user_id', '')
     
     if not user_id and platform_name and platform_user_id:
@@ -113,88 +113,6 @@ def google_callback():
     
     # 成功ページにリダイレクト
     return redirect(f"{FRONTEND_URL}/auth_success.html")
-
-# フロントエンド用の静的HTML
-@oauth_bp.route('/success')
-def success_page():
-    """認証成功ページ"""
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>認証成功</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-            .success { color: green; font-size: 24px; margin-bottom: 20px; }
-            .message { margin-bottom: 30px; }
-            .close-button { 
-                background-color: #4CAF50;
-                border: none;
-                color: white;
-                padding: 15px 32px;
-                text-align: center;
-                text-decoration: none;
-                display: inline-block;
-                font-size: 16px;
-                margin: 4px 2px;
-                cursor: pointer;
-                border-radius: 4px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="success">✓ 認証成功</div>
-        <div class="message">
-            Googleカレンダーとの連携が完了しました。<br>
-            このページを閉じて、LINEに戻ってください。
-        </div>
-        <button class="close-button" onclick="window.close()">閉じる</button>
-    </body>
-    </html>
-    """
-
-@oauth_bp.route('/error')
-def error_page():
-    """認証エラーページ"""
-    error = request.args.get('error', '不明なエラー')
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>認証エラー</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
-            .error {{ color: red; font-size: 24px; margin-bottom: 20px; }}
-            .message {{ margin-bottom: 30px; }}
-            .close-button {{ 
-                background-color: #f44336;
-                border: none;
-                color: white;
-                padding: 15px 32px;
-                text-align: center;
-                text-decoration: none;
-                display: inline-block;
-                font-size: 16px;
-                margin: 4px 2px;
-                cursor: pointer;
-                border-radius: 4px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="error">✗ 認証エラー</div>
-        <div class="message">
-            エラーが発生しました: {error}<br>
-            LINEに戻って、もう一度お試しください。
-        </div>
-        <button class="close-button" onclick="window.close()">閉じる</button>
-    </body>
-    </html>
-    """
 
 # Blueprintをアプリケーションに登録するためのヘルパー関数
 def register_oauth_routes(app):
