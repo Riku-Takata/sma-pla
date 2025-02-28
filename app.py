@@ -1,11 +1,10 @@
 # app.py
-from flask import Flask, render_template, send_from_directory
+from flask import Flask, render_template, send_from_directory, request
 import os
 from config import Config
 from db import db
 from models import User, UserPlatformLink
 from handlers.slack_handler import slack_bp
-from archive.line_handler import register_line_handler
 from routes.oauth_routes import register_oauth_routes
 
 def create_app():
@@ -24,9 +23,6 @@ def create_app():
 
     # Slackハンドラーの登録
     app.register_blueprint(slack_bp)
-    
-    # LINEハンドラーの登録
-    register_line_handler(app)
     
     # OAuth関連のルート登録
     register_oauth_routes(app)
@@ -69,7 +65,7 @@ def create_app():
             <div class="success">✓ 認証成功</div>
             <div class="message">
                 Googleカレンダーとの連携が完了しました。<br>
-                このページを閉じて、LINEに戻ってください。
+                このページを閉じて、Slackに戻ってください。
             </div>
             <button class="close-button" onclick="window.close()">閉じる</button>
         </body>
@@ -110,7 +106,7 @@ def create_app():
             <div class="error">✗ 認証エラー</div>
             <div class="message">
                 エラーが発生しました: {error}<br>
-                LINEに戻って、もう一度お試しください。
+                Slackに戻って、もう一度お試しください。
             </div>
             <button class="close-button" onclick="window.close()">閉じる</button>
         </body>
@@ -166,10 +162,6 @@ def create_app():
                     border-radius: 50%;
                     text-align: center;
                 }
-                .qr-code {
-                    text-align: center;
-                    margin: 30px 0;
-                }
             </style>
         </head>
         <body>
@@ -177,24 +169,19 @@ def create_app():
             
             <div class="card">
                 <h2>サービス概要</h2>
-                <p>LINEのメッセージから予定を自動的に検出し、Googleカレンダーに登録するサービスです。予定の入力の手間を省き、ダブルブッキングを防ぎます。</p>
+                <p>Slackのメッセージから予定を自動的に検出し、Googleカレンダーに登録するサービスです。予定の入力の手間を省き、ダブルブッキングを防ぎます。</p>
             </div>
             
             <div class="card">
                 <h2>使い方</h2>
                 <ol class="steps">
-                    <li>下記のQRコードから友だち追加してください</li>
-                    <li>友人との会話で予定について話し合った後、「/plan」または「予定」とだけ入力してください</li>
+                    <li>Slackワークスペースにボットを追加してください</li>
+                    <li>チャンネルで予定について話し合った後、<code>/plan</code>と入力してください</li>
                     <li>それまでの会話履歴から自動的に予定情報を抽出します<br>例: 「明日15時にオフィスで打ち合わせしましょう」→「了解です」→「/plan」</li>
                     <li>初回利用時は、Googleアカウントとの連携画面が表示されます</li>
                     <li>連携すると、自動的に予定がGoogleカレンダーに登録されます</li>
+                    <li>予定が重複している場合は通知され、別の時間を提案します</li>
                 </ol>
-                
-                <div class="qr-code">
-                    <p>QRコード (LINE友だち追加用)</p>
-                    <img src="/static/qr_code.png" alt="LINE QRコード" style="max-width: 200px;">
-                    <p><small>※ QRコードは実際に発行したものに置き換えてください</small></p>
-                </div>
             </div>
         </body>
         </html>

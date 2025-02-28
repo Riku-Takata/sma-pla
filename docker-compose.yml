@@ -23,7 +23,7 @@ services:
     environment:
       - NGROK_AUTH=${NGROK_AUTH_TOKEN}
       - NGROK_PORT=web:5001
-      - NGROK_REGION=ap
+      - --region=ap
     networks:
       - app-network
 

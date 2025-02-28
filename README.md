@@ -40,12 +40,24 @@ cp .env.example .env
 
 ### 3. Dockerを使ってアプリケーションを起動
 
+#### macOS/Linux:
 ```bash
 # 実行権限を付与
 chmod +x startup.sh
 
 # スタートアップスクリプトを実行
 ./startup.sh
+```
+
+#### Windows:
+```
+# スタートアップバッチファイルを実行
+start.bat
+```
+
+または直接PowerShellで:
+```powershell
+powershell -ExecutionPolicy Bypass -File startup.ps1
 ```
 
 スクリプトはngrokのURLを自動的に取得し、Slack APIの設定に必要なURLを表示します。
@@ -171,7 +183,3 @@ docker-compose exec ngrok /bin/sh -c 'curl http://localhost:4040/api/tunnels'
    ```bash
    # slack_handler.pyの/eventsエンドポイントにデバッグログを追加
    ```
-
-## ライセンス
-
-MIT License
