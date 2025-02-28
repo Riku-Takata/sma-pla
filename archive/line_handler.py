@@ -12,7 +12,7 @@ from linebot.models import (
     QuickReply, QuickReplyButton, MessageAction
 )
 
-from models import User, UserPlatformLink, db
+from archive.models import User, UserPlatformLink, db
 from utils.nlp_parser import parse_schedule_from_text
 from utils.calendar_handler import create_calendar_event, check_schedule_conflicts, get_authorization_url
 

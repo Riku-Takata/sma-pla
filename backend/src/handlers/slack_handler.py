@@ -8,7 +8,7 @@ from slack_sdk import WebClient
 from slack_sdk.signature import SignatureVerifier
 from slack_sdk.errors import SlackApiError
 
-from models import User, UserPlatformLink, db
+from models.user import User, UserPlatformLink, db
 from utils.message_parser import parse_user_input_for_scheduling
 from utils.calendar_handler import (
     create_calendar_event, check_schedule_conflicts,

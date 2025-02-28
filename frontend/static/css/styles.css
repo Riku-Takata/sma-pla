@@ -1,0 +1,260 @@
+/* 基本スタイル */
+:root {
+  --primary-color: #4a90e2;
+  --primary-gradient-start: #ff7e5f;
+  --primary-gradient-end: #feb47b;
+  --success-color: #4CAF50;
+  --danger-color: #f44336;
+  --warning-color: #ff9800;
+  --background-color: #f8f9fa;
+  --card-background: white;
+  --text-color: #333;
+  --text-secondary: #6c757d;
+  --border-color: #e9ecef;
+  --shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  line-height: 1.6;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* ヘッダースタイル */
+header {
+  margin-bottom: 30px;
+  text-align: center;
+  padding: 20px 0;
+  background: linear-gradient(to right, var(--primary-gradient-start), var(--primary-gradient-end));
+  color: white;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+header h1 {
+  font-size: 2.5rem;
+  margin-bottom: 5px;
+}
+
+header .subtitle {
+  font-size: 1.2rem;
+  opacity: 0.9;
+}
+
+/* ステータスカード */
+.status-card {
+  background-color: var(--card-background);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 30px;
+  display: flex;
+  align-items: center;
+  box-shadow: var(--shadow);
+}
+
+.status-indicator {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  margin-right: 10px;
+}
+
+.status-indicator.online {
+  background-color: var(--success-color);
+  box-shadow: 0 0 10px var(--success-color);
+}
+
+.status-indicator.offline {
+  background-color: var(--danger-color);
+  box-shadow: 0 0 10px var(--danger-color);
+}
+
+.status-card p {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* 通知コンテナ */
+.notifications-container {
+  background-color: var(--card-background);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 30px;
+  box-shadow: var(--shadow);
+}
+
+.notifications-container h2 {
+  margin-bottom: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-color);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 30px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* 通知カード */
+.notification-card {
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 15px;
+  background-color: white;
+  border-left: 4px solid var(--primary-color);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+}
+
+.notification-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.notification-card.approved {
+  border-left-color: var(--success-color);
+  background-color: rgba(76, 175, 80, 0.05);
+}
+
+.notification-card.denied {
+  border-left-color: var(--danger-color);
+  background-color: rgba(244, 67, 54, 0.05);
+}
+
+.notification-card.success {
+  border-left-color: var(--success-color);
+  background-color: rgba(76, 175, 80, 0.05);
+}
+
+.notification-card.error {
+  border-left-color: var(--danger-color);
+  background-color: rgba(244, 67, 54, 0.05);
+}
+
+.notification-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.notification-title {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.notification-time {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.notification-body {
+  margin-bottom: 15px;
+  color: var(--text-color);
+}
+
+.notification-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.notification-actions button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.approve-btn {
+  background-color: var(--success-color);
+  color: white;
+}
+
+.approve-btn:hover {
+  background-color: #45a049;
+}
+
+.deny-btn {
+  background-color: var(--danger-color);
+  color: white;
+}
+
+.deny-btn:hover {
+  background-color: #da190b;
+}
+
+.status-text {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.status-text.error {
+  color: var(--danger-color);
+}
+
+/* スピナーアニメーション */
+.spinner-small {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-left-color: var(--primary-color);
+  border-radius: 50%;
+  animation: spinner-animation 1s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@keyframes spinner-animation {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* フッター */
+footer {
+  text-align: center;
+  padding: 20px 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* レスポンシブスタイル */
+@media (max-width: 768px) {
+  .container {
+      padding: 15px;
+  }
+  
+  header h1 {
+      font-size: 2rem;
+  }
+  
+  .notification-card {
+      padding: 12px;
+  }
+  
+  .notification-actions {
+      flex-direction: column;
+  }
+  
+  .notification-actions button {
+      width: 100%;
+  }
+}

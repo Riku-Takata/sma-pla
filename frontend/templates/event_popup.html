@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>予定確認</title>
+    <link rel="icon" href="{{ url_for('static', filename='img/favicon.ico') }}" type="image/x-icon">
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #ff7e5f, #feb47b);
+            color: white;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            text-align: center;
+        }
+
+        .popup-container {
+            background-color: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(5px);
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            width: 90%;
+            max-width: 350px;
+        }
+
+        h2 {
+            margin-top: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .event-details {
+            margin-top: 20px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+
+        .event-details p {
+            margin: 8px 0;
+            font-size: 16px;
+        }
+
+        .event-details .label {
+            font-weight: bold;
+            opacity: 0.9;
+        }
+
+        .event-details .value {
+            margin-left: 8px;
+        }
+
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        button {
+            font-size: 16px;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        button.approve {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        button.approve:hover {
+            background-color: #45a049;
+        }
+
+        button.deny {
+            background-color: #f44336;
+            color: white;
+        }
+
+        button.deny:hover {
+            background-color: #da190b;
+        }
+
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid white;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .result-container {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .success-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+
+        .error-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="popup-container">
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+        </div>
+
+        <div id="event-container" style="display: none;">
+            <h2>新しい予定</h2>
+            <div class="event-details" id="event-details">
+                <!-- イベント詳細がここに入ります -->
+            </div>
+            <div class="button-container">
+                <button class="approve" id="approve-btn">承認</button>
+                <button class="deny" id="deny-btn">拒否</button>
+            </div>
+        </div>
+
+        <div id="result-success" class="result-container">
+            <div class="success-icon">✅</div>
+            <h2>予定を登録しました</h2>
+            <p>Googleカレンダーに予定が追加されました。</p>
+        </div>
+
+        <div id="result-error" class="result-container">
+            <div class="error-icon">❌</div>
+            <h2>予定をキャンセルしました</h2>
+            <p>予定の登録をキャンセルしました。</p>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const eventId = '{{ event_id }}';
+            const loadingElement = document.getElementById('loading');
+            const eventContainer = document.getElementById('event-container');
+            const eventDetails = document.getElementById('event-details');
+            const approveBtn = document.getElementById('approve-btn');
+            const denyBtn = document.getElementById('deny-btn');
+            const resultSuccess = document.getElementById('result-success');
+            const resultError = document.getElementById('result-error');
+
+            // イベント情報を取得
+            fetch(`/api/event/${eventId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Event not found');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // ローディング表示を隠す
+                    loadingElement.style.display = 'none';
+                    
+                    // イベント情報を表示
+                    eventContainer.style.display = 'block';
+                    
+                    // イベント詳細の構築
+                    let detailsHtml = '';
+                    detailsHtml += `<p><span class="label">タイトル:</span><span class="value">${data.summary || '予定'}</span></p>`;
+                    detailsHtml += `<p><span class="label">日時:</span><span class="value">${data.date || ''} ${data.time || ''}</span></p>`;
+                    
+                    if (data.location) {
+                        detailsHtml += `<p><span class="label">場所:</span><span class="value">${data.location}</span></p>`;
+                    }
+                    
+                    if (data.description) {
+                        detailsHtml += `<p><span class="label">詳細:</span><span class="value">${data.description}</span></p>`;
+                    }
+                    
+                    eventDetails.innerHTML = detailsHtml;
+                })
+                .catch(error => {
+                    console.error('Error fetching event:', error);
+                    loadingElement.innerHTML = `<p>エラーが発生しました: ${error.message}</p>`;
+                });
+
+            // 承認ボタンのイベントハンドラ
+            approveBtn.addEventListener('click', function() {
+                // ローディング表示
+                eventContainer.style.display = 'none';
+                loadingElement.style.display = 'flex';
+                
+                // 承認APIを呼び出す
+                fetch(`/api/event/${eventId}/approve`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Approval response:', data);
+                    
+                    // ローディング表示を隠す
+                    loadingElement.style.display = 'none';
+                    
+                    // 成功結果を表示
+                    resultSuccess.style.display = 'block';
+                    
+                    // 3秒後にウィンドウを閉じる
+                    setTimeout(() => {
+                        window.close();
+                    }, 3000);
+                })
+                .catch(error => {
+                    console.error('Error approving event:', error);
+                    loadingElement.innerHTML = `<p>エラーが発生しました: ${error.message}</p>`;
+                });
+            });
+
+            // 拒否ボタンのイベントハンドラ
+            denyBtn.addEventListener('click', function() {
+                // ローディング表示
+                eventContainer.style.display = 'none';
+                loadingElement.style.display = 'flex';
+                
+                // 拒否APIを呼び出す
+                fetch(`/api/event/${eventId}/deny`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Denial response:', data);
+                    
+                    // ローディング表示を隠す
+                    loadingElement.style.display = 'none';
+                    
+                    // エラー結果を表示
+                    resultError.style.display = 'block';
+                    
+                    // 3秒後にウィンドウを閉じる
+                    setTimeout(() => {
+                        window.close();
+                    }, 3000);
+                })
+                .catch(error => {
+                    console.error('Error denying event:', error);
+                    loadingElement.innerHTML = `<p>エラーが発生しました: ${error.message}</p>`;
+                });
+            });
+        });
+    </script>
+</body>
+</html>

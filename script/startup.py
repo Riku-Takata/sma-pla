@@ -11,6 +11,7 @@ import json
 import subprocess
 import re
 import platform
+import webbrowser
 
 
 def run_command(command):
@@ -153,9 +154,57 @@ def display_urls(url):
     print(f"Interactive Components:  {url}/webhook/slack/interactive")
     print(f"OAuth Redirect URL:      {url}/oauth/google/callback")
     print("----------------------------------------")
+    
+    # 通知システムのURL
+    notification_url = f"{url}:5002/"
+    print(f"\n🔔 通知センターURL:        {notification_url}")
+    print("----------------------------------------")
+    
     print("")
     print("✅ ログを確認するには: docker-compose logs -f")
+    print("✅ 通知センターを開くには: ブラウザで上記URLにアクセス")
     print("✅ 停止するには: docker-compose down")
+    
+    # 通知センターをブラウザで開く
+    try:
+        webbrowser.open(notification_url)
+        print("✅ 通知センターをブラウザで開きました")
+    except:
+        print("⚠️ 通知センターを自動で開けませんでした。手動でアクセスしてください。")
+
+
+def start_desktop_client():
+    """デスクトップクライアントを起動（オプション）"""
+    if not os.path.exists("desktop-client.py"):
+        print("⚠️ デスクトップクライアントが見つかりません。Web通知のみ使用できます。")
+        return False
+    
+    # PyQt5の確認
+    try:
+        import PyQt5
+        print("✅ PyQt5が見つかりました")
+    except ImportError:
+        print("⚠️ PyQt5がインストールされていません。デスクトップクライアントは使用できません。")
+        print("  インストールするには: pip install PyQt5")
+        return False
+    
+    # プラットフォームに応じた起動コマンド
+    os_name = platform.system()
+    
+    if os_name == "Windows":
+        command = "start pythonw desktop-client.py"
+    elif os_name == "Darwin":  # macOS
+        command = "python3 desktop-client.py &"
+    else:  # Linux
+        command = "python3 desktop-client.py &"
+    
+    try:
+        subprocess.Popen(command, shell=True)
+        print("✅ デスクトップクライアントを起動しました")
+        return True
+    except Exception as e:
+        print(f"❌ デスクトップクライアントの起動に失敗しました: {e}")
+        return False
 
 
 def main():
@@ -181,7 +230,13 @@ def main():
     if not update_env_file(ngrok_url):
         return
     
+    # 通知センターを表示
     display_urls(ngrok_url)
+    
+    # デスクトップクライアントの起動（オプション）
+    use_desktop = input("\nデスクトップクライアントも起動しますか？ (y/n): ").strip().lower()
+    if use_desktop in ['y', 'yes']:
+        start_desktop_client()
     
     # Windows環境であれば入力待ち
     if os_name == "Windows":
