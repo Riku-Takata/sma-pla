@@ -8,7 +8,8 @@ import os
 import redis
 import json
 import uuid
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 
 from src.config import Config
 from src.utils.db import db
@@ -16,6 +17,17 @@ from src.models.user import User, UserPlatformLink
 from src.handlers.slack_handler import slack_bp
 from src.routes.oauth_routes import register_oauth_routes
 from src.utils.calendar_handler import create_calendar_event, check_schedule_conflicts
+
+# ロギング設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def create_app(test_config=None):
     """
@@ -52,10 +64,16 @@ def create_app(test_config=None):
     redis_url = app.config.get('REDIS_URL', 'redis://localhost:6379/0')
     notification_channel = app.config.get('NOTIFICATION_CHANNEL', 'smart_scheduler_notifications')
     
-    redis_client = redis.from_url(redis_url)
-    app.redis_client = redis_client
-    app.notification_channel = notification_channel
-
+    try:
+        redis_client = redis.from_url(redis_url)
+        app.redis_client = redis_client
+        app.notification_channel = notification_channel
+        logger.info(f"Redisクライアント初期化成功: {redis_url}")
+    except Exception as e:
+        logger.error(f"Redisクライアント初期化エラー: {e}", exc_info=True)
+        app.redis_client = None
+        app.notification_channel = None
+    
     # ルートの登録
     app.register_blueprint(slack_bp)
     register_oauth_routes(app)
@@ -85,6 +103,7 @@ def create_app(test_config=None):
         """
         data = request.get_json()
         if data is None:
+            logger.error("イベント作成リクエストにデータがありません")
             return jsonify({"error": "No data provided"}), 400
         
         # イベントIDを生成
@@ -93,26 +112,37 @@ def create_app(test_config=None):
             data['event_id'] = event_id
         
         # イベントデータをRedisに保存 (5分間有効)
-        redis_client.setex(f"event:{event_id}", 300, json.dumps(data))
-        
-        # 通知をRedisパブサブチャネルに送信
-        redis_client.publish(notification_channel, json.dumps({
-            'type': 'event',
-            'event_id': event_id,
-            'summary': data.get('summary', '予定'),
-            'date': data.get('date', ''),
-            'time': data.get('time', ''),
-            'location': data.get('location', ''),
-            'description': data.get('description', '')
-        }))
+        if app.redis_client:
+            try:
+                app.redis_client.setex(f"event:{event_id}", 300, json.dumps(data))
+                
+                # 通知をRedisパブサブチャネルに送信
+                app.redis_client.publish(app.notification_channel, json.dumps({
+                    'type': 'event',
+                    'event_id': event_id,
+                    'summary': data.get('summary', '予定'),
+                    'date': data.get('date', ''),
+                    'time': data.get('time', ''),
+                    'location': data.get('location', ''),
+                    'description': data.get('description', '')
+                }))
+                
+                logger.info(f"イベント作成: id={event_id}")
+            except Exception as e:
+                logger.error(f"Redis通知送信エラー: {e}", exc_info=True)
         
         return jsonify({"status": "ok", "event_id": event_id}), 201
 
     @app.route("/api/events/<event_id>", methods=["GET"])
     def get_event(event_id):
         """イベント情報取得エンドポイント"""
-        event_data = redis_client.get(f"event:{event_id}")
+        if not app.redis_client:
+            logger.error("Redisクライアントが初期化されていません")
+            return jsonify({"error": "Redis client not available"}), 500
+        
+        event_data = app.redis_client.get(f"event:{event_id}")
         if not event_data:
+            logger.warning(f"イベントが見つかりません: {event_id}")
             return jsonify({"error": "Event not found"}), 404
         
         return Response(event_data, mimetype='application/json')
@@ -121,90 +151,115 @@ def create_app(test_config=None):
     def approve_event(event_id):
         """イベント承認処理エンドポイント"""
         # Redisからイベント情報を取得
-        event_data_raw = redis_client.get(f"event:{event_id}")
+        if not app.redis_client:
+            logger.error("Redisクライアントが初期化されていません")
+            return jsonify({"error": "Redis client not available"}), 500
+        
+        event_data_raw = app.redis_client.get(f"event:{event_id}")
         if not event_data_raw:
+            logger.warning(f"イベントが見つかりません: {event_id}")
             return jsonify({"error": "Event not found"}), 404
         
-        data = json.loads(event_data_raw)
-        user_id = data.get("user_id")
-        event_data = data.get("event_data")
-        
-        if not user_id or not event_data:
-            return jsonify({"error": "Missing user_id or event_data"}), 400
-        
-        # Googleカレンダーにイベントを登録
-        success, result = create_calendar_event(user_id, event_data)
-        
-        # 結果を通知チャネルにパブリッシュ
-        notification = {
-            'type': 'result',
-            'success': success,
-            'message': f"予定「{event_data.get('title', '予定')}」の登録が{'成功' if success else '失敗'}しました。"
-        }
-        redis_client.publish(notification_channel, json.dumps(notification))
-        
-        # Slack通知（オプション）
-        if data.get("channel_id") and data.get("slack_user_id"):
-            try:
-                from src.handlers.slack_handler import slack_client
-                slack_client.chat_postEphemeral(
-                    channel=data["channel_id"],
-                    user=data["slack_user_id"],
-                    text=f"✅ 予定「{event_data.get('title', '予定')}」をGoogleカレンダーに追加しました。"
-                )
-            except Exception as e:
-                app.logger.error(f"Error sending Slack notification: {e}")
-        
-        # イベント情報をRedisから削除
-        redis_client.delete(f"event:{event_id}")
-        
-        return jsonify({
-            "success": success,
-            "result": result
-        })
+        try:
+            data = json.loads(event_data_raw)
+            user_id = data.get("user_id")
+            event_data = data.get("event_data")
+            
+            if not user_id or not event_data:
+                logger.error(f"イベントデータ不足: user_id={user_id}, event_data={bool(event_data)}")
+                return jsonify({"error": "Missing user_id or event_data"}), 400
+            
+            # Googleカレンダーにイベントを登録
+            success, result = create_calendar_event(user_id, event_data)
+            
+            # 結果を通知チャネルにパブリッシュ
+            notification = {
+                'type': 'result',
+                'success': success,
+                'message': f"予定「{event_data.get('title', '予定')}」の登録が{'成功' if success else '失敗'}しました。"
+            }
+            app.redis_client.publish(app.notification_channel, json.dumps(notification))
+            
+            # Slack通知（オプション）
+            if data.get("channel_id") and data.get("slack_user_id"):
+                try:
+                    from src.handlers.slack_handler import slack_client
+                    if slack_client:
+                        slack_client.chat_postEphemeral(
+                            channel=data["channel_id"],
+                            user=data["slack_user_id"],
+                            text=f"✅ 予定「{event_data.get('title', '予定')}」をGoogleカレンダーに追加しました。"
+                        )
+                except Exception as e:
+                    logger.error(f"Slack通知送信エラー: {e}", exc_info=True)
+            
+            # イベント情報をRedisから削除
+            app.redis_client.delete(f"event:{event_id}")
+            
+            logger.info(f"イベント承認処理完了: id={event_id}, success={success}")
+            return jsonify({
+                "success": success,
+                "result": result
+            })
+        except Exception as e:
+            logger.error(f"イベント承認処理エラー: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/api/events/<event_id>/deny", methods=["POST"])
     def deny_event(event_id):
         """イベント拒否処理エンドポイント"""
         # Redisからイベント情報を取得
-        event_data_raw = redis_client.get(f"event:{event_id}")
+        if not app.redis_client:
+            logger.error("Redisクライアントが初期化されていません")
+            return jsonify({"error": "Redis client not available"}), 500
+        
+        event_data_raw = app.redis_client.get(f"event:{event_id}")
         if not event_data_raw:
+            logger.warning(f"イベントが見つかりません: {event_id}")
             return jsonify({"error": "Event not found"}), 404
         
-        data = json.loads(event_data_raw)
-        
-        # 結果を通知チャネルにパブリッシュ
-        notification = {
-            'type': 'result',
-            'success': False,
-            'message': f"予定「{data.get('summary', '予定')}」の登録がキャンセルされました。"
-        }
-        redis_client.publish(notification_channel, json.dumps(notification))
-        
-        # Slack通知（オプション）
-        if data.get("channel_id") and data.get("slack_user_id"):
-            try:
-                from src.handlers.slack_handler import slack_client
-                slack_client.chat_postEphemeral(
-                    channel=data["channel_id"],
-                    user=data["slack_user_id"],
-                    text=f"❌ 予定「{data.get('summary', '予定')}」の追加をキャンセルしました。"
-                )
-            except Exception as e:
-                app.logger.error(f"Error sending Slack notification: {e}")
-        
-        # イベント情報をRedisから削除
-        redis_client.delete(f"event:{event_id}")
-        
-        return jsonify({"status": "ok"})
+        try:
+            data = json.loads(event_data_raw)
+            
+            # 結果を通知チャネルにパブリッシュ
+            notification = {
+                'type': 'result',
+                'success': False,
+                'message': f"予定「{data.get('summary', '予定')}」の登録がキャンセルされました。"
+            }
+            app.redis_client.publish(app.notification_channel, json.dumps(notification))
+            
+            # Slack通知（オプション）
+            if data.get("channel_id") and data.get("slack_user_id"):
+                try:
+                    from src.handlers.slack_handler import slack_client
+                    if slack_client:
+                        slack_client.chat_postEphemeral(
+                            channel=data["channel_id"],
+                            user=data["slack_user_id"],
+                            text=f"❌ 予定「{data.get('summary', '予定')}」の追加をキャンセルしました。"
+                        )
+                except Exception as e:
+                    logger.error(f"Slack通知送信エラー: {e}", exc_info=True)
+            
+            # イベント情報をRedisから削除
+            app.redis_client.delete(f"event:{event_id}")
+            
+            logger.info(f"イベント拒否処理完了: id={event_id}")
+            return jsonify({"status": "ok"})
+        except Exception as e:
+            logger.error(f"イベント拒否処理エラー: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
     
     # カスタムエラーハンドラー
     @app.errorhandler(404)
     def not_found(error):
+        logger.warning(f"404エラー: {request.path}")
         return jsonify({"error": "Not found"}), 404
     
     @app.errorhandler(500)
     def server_error(error):
+        logger.error(f"500エラー: {str(error)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
     return app

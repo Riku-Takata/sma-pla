@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>スマート予定管理</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { 
+            font-family: 'Helvetica Neue', Arial, sans-serif; 
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 { 
+            color: #2c3e50; 
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            color: #7f8c8d;
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+        }
+        .card {
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            color: #2c3e50;
+            margin-top: 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .steps {
+            counter-reset: step-counter;
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .steps li {
+            position: relative;
+            margin-bottom: 15px;
+            padding-left: 40px;
+        }
+        .steps li:before {
+            content: counter(step-counter);
+            counter-increment: step-counter;
+            position: absolute;
+            left: 0;
+            width: 30px;
+            height: 30px;
+            line-height: 30px;
+            background-color: #3498db;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+        }
+        code {
+            background-color: #f1f1f1;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .api-status {
+            background-color: #27ae60;
+            color: white;
+            padding: 10px;
+            margin-top: 20px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        footer {
+            margin-top: 40px;
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 0.9rem;
+        }
+        @media (max-width: 600px) {
+            h1 { font-size: 2rem; }
+            .card { padding: 15px; }
+            .steps li { padding-left: 35px; }
+        }
+    </style>
+</head>
+<body>
+    <h1>スマート予定管理</h1>
+    <p class="subtitle">会話から予定を自動検出し、Googleカレンダーに登録します</p>
+    
+    <div class="card">
+        <h2>サービス概要</h2>
+        <p>Slackのメッセージから予定を自動的に検出し、Googleカレンダーに登録するサービスです。予定の入力の手間を省き、ダブルブッキングを防ぎます。</p>
+    </div>
+    
+    <div class="card">
+        <h2>使い方</h2>
+        <ol class="steps">
+            <li>Slackワークスペースにボットを追加してください</li>
+            <li>チャンネルで予定について話し合った後、<code>/plan</code>と入力してください</li>
+            <li>それまでの会話履歴から自動的に予定情報を抽出します<br>例: 「明日15時にオフィスで打ち合わせしましょう」→「了解です」→「/plan」</li>
+            <li>初回利用時は、Googleアカウントとの連携画面が表示されます</li>
+            <li>連携すると、自動的に予定がGoogleカレンダーに登録されます</li>
+            <li>予定が重複している場合は通知され、別の時間を提案します</li>
+        </ol>
+    </div>
+    
+    <div class="card">
+        <h2>APIエンドポイント</h2>
+        <ul>
+            <li><code>/webhook/slack/command</code> - Slackのスラッシュコマンドを処理</li>
+            <li><code>/api/events</code> - 予定イベントを処理</li>
+            <li><code>/oauth/google/authorize</code> - Google認証を開始</li>
+        </ul>
+    </div>
+    
+    <div class="api-status">
+        API Server is running!
+    </div>
+    
+    <footer>
+        <p>スマート予定管理システム &copy; 2025</p>
+    </footer>
+</body>
+</html>
