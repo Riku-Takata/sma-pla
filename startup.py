@@ -125,6 +125,13 @@ def update_env_file(url):
         else:
             content += f"\nFRONTEND_URL={url}\n"
         
+        # GOOGLE_REDIRECT_URIの行を置換または追加
+        redirect_uri = f"{url}/oauth/google/callback"
+        if re.search(r"^GOOGLE_REDIRECT_URI=", content, re.MULTILINE):
+            content = re.sub(r"^GOOGLE_REDIRECT_URI=.*$", f"GOOGLE_REDIRECT_URI={redirect_uri}", content, flags=re.MULTILINE)
+        else:
+            content += f"\nGOOGLE_REDIRECT_URI={redirect_uri}\n"
+        
         # ファイルに書き戻す
         with open(".env", "w") as f:
             f.write(content)

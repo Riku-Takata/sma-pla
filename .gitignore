@@ -19,6 +19,7 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+client_secret.json
 
 # 仮想環境
 venv/
@@ -69,4 +70,3 @@ $RECYCLE.BIN/
 *.swo
 .project
 .pydevproject
-.settings/
