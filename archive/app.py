@@ -1,9 +1,9 @@
 # app.py
 from flask import Flask, render_template, send_from_directory, request
 import os
-from config import Config
-from db import db
-from models import User, UserPlatformLink
+from archive.config import Config
+from archive.db import db
+from archive.models import User, UserPlatformLink
 from handlers.slack_handler import slack_bp
 from routes.oauth_routes import register_oauth_routes
 
@@ -113,6 +113,67 @@ def create_app():
         </html>
         """
 
+    # オーバーレイUI関連のエンドポイント
+    @app.route("/new_event", methods=["POST"])
+    def new_event():
+        """オーバーレイUIに新しいイベントを表示するエンドポイント"""
+        data = request.get_json()
+        print(f"DEBUG: /new_event called with data: {data}")
+        if data is None:
+            return jsonify({"error": "No data"}), 400
+        
+        # オーバーレイUIでイベント表示
+        from utils.overlay_ui import show_event_overlay
+        show_event_overlay(data)
+        
+        return jsonify({"status": "ok"}), 200
+
+    @app.route("/approve_event", methods=["POST"])
+    def approve_event():
+        """オーバーレイUIからのYes（承認）ボタンのコールバック処理"""
+        data = request.get_json()
+        user_id = data.get("user_id")
+        event_data = data.get("event_data")
+        
+        if not user_id or not event_data:
+            return jsonify({"error": "Missing user_id or event_data"}), 400
+        
+        # Googleカレンダーにイベントを登録
+        from utils.calendar_handler import create_calendar_event
+        success, result = create_calendar_event(user_id, event_data)
+        
+        if success:
+            # Slackに通知（オプション）
+            if data.get("channel_id") and data.get("slack_user_id"):
+                from handlers.slack_handler import slack_client
+                slack_client.chat_postEphemeral(
+                    channel=data["channel_id"],
+                    user=data["slack_user_id"],
+                    text=f"✅ 予定「{event_data['title']}」をGoogleカレンダーに追加しました。"
+                )
+        
+        return jsonify({
+            "success": success,
+            "result": result
+        })
+
+    @app.route("/deny_event", methods=["POST"])
+    def deny_event():
+        """オーバーレイUIからのNo（拒否）ボタンのコールバック処理"""
+        data = request.get_json()
+        print(f"DEBUG: Event denied: {data}")
+        
+        # Slackに通知（オプション）
+        if data.get("channel_id") and data.get("slack_user_id"):
+            from handlers.slack_handler import slack_client
+            slack_client.chat_postEphemeral(
+                channel=data["channel_id"],
+                user=data["slack_user_id"],
+                text=f"❌ 予定「{data.get('summary', '不明')}」の追加をキャンセルしました。"
+            )
+            
+        return jsonify({"status": "ok"})
+    
     @app.route("/")
     def index():
         return """

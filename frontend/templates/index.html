@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スマート予定管理 - 通知センター</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='img/favicon.ico') }}" type="image/x-icon">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/notifications.js') }}" defer></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>スマート予定管理</h1>
+            <p class="subtitle">通知センター</p>
+        </header>
+
+        <main>
+            <div class="status-card">
+                <div id="connection-status" class="status-indicator offline">切断</div>
+                <p>通知サーバーの状態</p>
+            </div>
+
+            <div class="notifications-container">
+                <h2>最近の通知</h2>
+                <div id="notifications-list">
+                    <div class="empty-state">
+                        通知がありません。Slackで予定を検出すると、ここに表示されます。
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>スマート予定管理システム &copy; 2025</p>
+        </footer>
+    </div>
+</body>
+</html>

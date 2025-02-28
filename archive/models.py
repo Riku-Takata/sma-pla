@@ -1,6 +1,6 @@
 # models.py
 from datetime import datetime
-from db import db
+from archive.db import db
 from sqlalchemy import func
 
 class User(db.Model):
