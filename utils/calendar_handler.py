@@ -78,32 +78,87 @@ def get_credentials_from_user(user_id):
     """
     ユーザーIDから認証情報を取得する
     
+    Args:
+        user_id (int): ユーザーID
+        
     Returns:
         (Credentials or None, str or None):
             credentials: トークンが有効ならCredentials
             error: エラー文字列またはNone
     """
-    if os.path.exists(TOKEN_PATH):
-        with open(TOKEN_PATH, 'rb') as token:
-            credentials = pickle.load(token)
-        
-        if credentials and credentials.valid:
-            return credentials, None
-        
-        # トークン期限切れの場合、リフレッシュトークンで更新
-        if credentials and credentials.expired and credentials.refresh_token:
-            try:
-                credentials.refresh(Request())
-                
-                # 更新されたトークンを再度保存
-                with open(TOKEN_PATH, 'wb') as token_file:
-                    pickle.dump(credentials, token_file)
-                
-                return credentials, None
-            except Exception as e:
-                return None, f"トークンの更新に失敗しました: {str(e)}"
+    # まずDBからユーザー情報を取得
+    from models import User
+    user = User.query.get(user_id)
     
-    return None, "認証情報が見つかりません。再度認証してください。"
+    if not user or not user.google_refresh_token:
+        return None, "Googleアカウントと連携されていません。認証を行ってください。"
+    
+    # token.pickleが存在する場合、そこから読み込む
+    pickle_valid = False
+    if os.path.exists(TOKEN_PATH):
+        try:
+            with open(TOKEN_PATH, 'rb') as token:
+                credentials = pickle.load(token)
+            
+            if credentials and credentials.valid:
+                pickle_valid = True
+                return credentials, None
+            
+            # トークン期限切れの場合、リフレッシュトークンで更新
+            if credentials and credentials.expired and credentials.refresh_token:
+                try:
+                    credentials.refresh(Request())
+                    
+                    # 更新されたトークンを再度保存
+                    with open(TOKEN_PATH, 'wb') as token_file:
+                        pickle.dump(credentials, token_file)
+                    
+                    pickle_valid = True
+                    return credentials, None
+                except Exception as e:
+                    # リフレッシュに失敗した場合、次のステップでDBから再構築
+                    print(f"Token refresh failed: {e}")
+        except Exception as e:
+            print(f"Error loading token.pickle: {e}")
+            # ファイルの読み込みに失敗した場合は、DBから再構築
+    
+    if not pickle_valid:
+        # token.pickleがない、無効、または更新に失敗した場合
+        try:
+            # DBからの認証情報で新しいCredentialsオブジェクトを作成
+            creds = Credentials(
+                token=user.google_access_token,
+                refresh_token=user.google_refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=os.getenv("GOOGLE_CLIENT_ID"),
+                client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+                scopes=SCOPES
+            )
+            
+            # トークンが期限切れなら更新
+            if creds.expired:
+                try:
+                    creds.refresh(Request())
+                    
+                    # 更新後のトークンをDBに保存
+                    user.google_access_token = creds.token
+                    from db import db
+                    db.session.commit()
+                    
+                    # token.pickleにも保存
+                    with open(TOKEN_PATH, 'wb') as token_file:
+                        pickle.dump(creds, token_file)
+                except Exception as e:
+                    # リフレッシュに失敗した場合、エラーを返す
+                    return None, f"トークンの更新に失敗しました: {str(e)}"
+            
+            return creds, None
+        except Exception as e:
+            # DBトークンからのCredentials作成に失敗した場合
+            return None, f"認証情報の構築に失敗しました: {str(e)}"
+    
+    # ここに到達することはないはずだが、念のために
+    return None, "予期せぬエラーが発生しました。再度認証を行ってください。"
 
 def get_calendar_service(user_id):
     """
@@ -315,3 +370,30 @@ def parse_datetime(datetime_str):
         if dt.tzinfo is None:
             dt = pytz.timezone('Asia/Tokyo').localize(dt)
         return dt
+
+def get_calendar_service(user_id):
+    """
+    Google Calendar APIサービスを取得する
+    
+    Args:
+        user_id (int): ユーザーID
+        
+    Returns:
+        (service or None, error or None): カレンダーサービスとエラーメッセージのタプル
+    """
+    credentials, error = get_credentials_from_user(user_id)
+    if error:
+        return None, error
+    
+    try:
+        service = build('calendar', 'v3', credentials=credentials)
+        return service, None
+    except Exception as e:
+        # Google APIの初期化に失敗した場合も、古いtoken.pickleを削除
+        if os.path.exists(TOKEN_PATH):
+            try:
+                os.remove(TOKEN_PATH)
+            except:
+                pass
+        return None, f"Google Calendar APIの初期化に失敗しました: {str(e)}"
+    

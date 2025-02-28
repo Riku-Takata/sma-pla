@@ -12,7 +12,7 @@ from models import User, UserPlatformLink, db
 from utils.message_parser import parse_user_input_for_scheduling
 from utils.calendar_handler import (
     create_calendar_event, check_schedule_conflicts,
-    get_authorization_url, find_next_available_time, exchange_code_for_token
+    get_authorization_url, get_calendar_service, exchange_code_for_token
 )
 
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
@@ -150,9 +150,31 @@ def process_plan_command(channel_id, user_id, text):
     # 表示用ブロック
     blocks = create_schedule_blocks(schedule_info)
 
-    # 認証済みかチェック
+    # 認証状態をチェック - データベースのトークンだけでなく実際に接続確認も行う
+    auth_valid = False
+    auth_error_message = None
+    
     if user.google_refresh_token:
-        # 既にGoogle認証済み → 登録ボタン
+        # トークンの有効性をチェック
+        service, error = get_calendar_service(user.id)
+        if service and not error:
+            # 実際にAPIが使えるか試してみる
+            try:
+                # 非常に軽いAPIリクエストを試す
+                test_request = service.calendarList().list(maxResults=1).execute()
+                auth_valid = True
+            except Exception as e:
+                auth_error_message = f"Google Calendar APIへの接続エラー: {str(e)}"
+                # 無効な認証情報の場合、DBからリフレッシュトークンをクリア
+                if "invalid" in str(e).lower() or "expired" in str(e).lower():
+                    user.google_refresh_token = None
+                    user.google_access_token = None
+                    db.session.commit()
+        else:
+            auth_error_message = error
+    
+    if auth_valid:
+        # 認証が有効 → 登録ボタン
         blocks.append({
             "type": "actions",
             "elements": [
@@ -170,15 +192,22 @@ def process_plan_command(channel_id, user_id, text):
             ]
         })
     else:
-        # 未認証 → 認証URL + コード入力モーダルボタン
+        # 未認証または認証が無効 → 認証URL + コード入力モーダルボタン
         auth_url, _ = get_authorization_url()
+        
+        # エラーメッセージの表示
+        error_text = "Googleカレンダーが未連携です。認証してください。"
+        if auth_error_message:
+            error_text = f"⚠️ Googleカレンダーとの連携に問題があります: {auth_error_message}\n再度認証を行ってください。"
+        
         blocks.append({
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "Googleカレンダーが未連携です。認証してください。"
+                "text": error_text
             }
         })
+        
         blocks.append({
             "type": "actions",
             "elements": [
