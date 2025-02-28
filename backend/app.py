@@ -9,6 +9,7 @@ import redis
 import json
 import uuid
 import logging
+import time
 from datetime import datetime, timedelta
 
 from src.config import Config
@@ -63,14 +64,45 @@ def create_app(test_config=None):
     # Redisクライアントの設定と初期化
     redis_url = app.config.get('REDIS_URL', 'redis://localhost:6379/0')
     notification_channel = app.config.get('NOTIFICATION_CHANNEL', 'smart_scheduler_notifications')
-    
+
+    # Redis接続を試行する関数
+    def init_redis_client(max_retries=5, retry_interval=3):
+        """
+        Redisクライアントの初期化を行い、接続を試みる
+        
+        Args:
+            max_retries (int): 最大再試行回数
+            retry_interval (int): 再試行間隔（秒）
+            
+        Returns:
+            redis.Redis or None: 接続成功時はRedisクライアント、失敗時はNone
+        """
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Redisクライアント初期化試行: {attempt+1}/{max_retries}")
+                redis_client = redis.from_url(redis_url)
+                # 接続テスト
+                redis_client.ping()
+                logger.info(f"Redisクライアント初期化成功: {redis_url}")
+                return redis_client
+            except redis.exceptions.ConnectionError as e:
+                logger.warning(f"Redis接続エラー (試行 {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"{retry_interval}秒後に再試行します...")
+                    time.sleep(retry_interval)
+            except Exception as e:
+                logger.error(f"Redisクライアント初期化エラー: {e}", exc_info=True)
+                break
+        
+        logger.error("Redisへの接続に失敗しました。ローカルモードで実行します。")
+        return None
+
+    # Redis接続を試行
     try:
-        redis_client = redis.from_url(redis_url)
-        app.redis_client = redis_client
-        app.notification_channel = notification_channel
-        logger.info(f"Redisクライアント初期化成功: {redis_url}")
+        app.redis_client = init_redis_client()
+        app.notification_channel = notification_channel if app.redis_client else None
     except Exception as e:
-        logger.error(f"Redisクライアント初期化エラー: {e}", exc_info=True)
+        logger.error(f"Redisクライアント初期化中の予期せぬエラー: {e}", exc_info=True)
         app.redis_client = None
         app.notification_channel = None
     

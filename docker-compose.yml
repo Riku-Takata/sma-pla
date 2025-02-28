@@ -1,13 +1,20 @@
 services:
   redis:
-    image: redis:alpine
+    image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    command: redis-server --appendonly no --save ""  # 無効なオプションを削除
     networks:
       - app-network
     restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   web:
     build: 
@@ -22,7 +29,8 @@ services:
     volumes:
       - ./backend:/app
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: always
     networks:
       - app-network
@@ -41,8 +49,10 @@ services:
     volumes:
       - ./frontend:/app
     depends_on:
-      - redis
-      - web
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
     restart: always
     networks:
       - app-network
@@ -63,7 +73,8 @@ services:
     networks:
       - app-network
     depends_on:
-      - web
+      web:
+        condition: service_started
 
 networks:
   app-network:

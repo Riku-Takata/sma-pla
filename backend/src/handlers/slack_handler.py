@@ -142,6 +142,48 @@ def process_plan_command_with_app_context(app, channel_id, user_id, team_id, tex
     with app.app_context():
         process_plan_command(channel_id, user_id, team_id, text)
 
+# Redisにイベントデータを保存する関数を改善
+def save_event_to_redis(event_id, event_data):
+    """
+    イベントデータをRedisに保存し、通知チャネルにパブリッシュする
+    
+    Args:
+        event_id (str): イベントID
+        event_data (dict): イベントデータ
+        
+    Returns:
+        bool: 成功時はTrue、失敗時はFalse
+    """
+    try:
+        # アプリケーションコンテキストからRedisクライアントを取得
+        redis_client = current_app.redis_client
+        notification_channel = current_app.notification_channel
+        
+        if not redis_client or not notification_channel:
+            logger.warning("Redisが利用できないため、通知を送信できません")
+            return False
+        
+        # イベントデータをRedisに保存（5分間有効）
+        redis_client.setex(f"event:{event_id}", 300, json.dumps(event_data))
+        
+        # 通知をRedisパブサブチャネルに送信
+        notification_data = {
+            'type': 'event',
+            'event_id': event_id,
+            'summary': event_data.get('summary', '予定'),
+            'date': event_data.get('date', ''),
+            'time': event_data.get('time', ''),
+            'location': event_data.get('location', '')
+        }
+        
+        redis_client.publish(notification_channel, json.dumps(notification_data))
+        logger.info(f"イベント通知をRedisに送信: event_id={event_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Redis通知送信エラー: {e}", exc_info=True)
+        return False
+
 def process_plan_command(channel_id, user_id, team_id, text):
     """
     1) テキスト or 最近の会話から予定を解析
@@ -262,25 +304,8 @@ def process_plan_command(channel_id, user_id, team_id, text):
         }
     }
     
-    # Redisにイベントデータを保存（フロントエンドが取得できるように）
-    try:
-        redis_url = current_app.config.get('REDIS_URL', 'redis://localhost:6379/0')
-        redis_client = redis.from_url(redis_url)
-        notification_channel = current_app.config.get('NOTIFICATION_CHANNEL', 'smart_scheduler_notifications')
-        
-        # イベントデータをRedisに保存（5分間有効）
-        redis_client.setex(f"event:{event_id}", 300, json.dumps(event_data))
-        
-        # 通知をRedisパブサブチャネルに送信
-        redis_client.publish(notification_channel, json.dumps({
-            'type': 'event',
-            'event_id': event_id,
-            'summary': schedule_info['title'],
-            'date': start_dt.strftime('%Y-%m-%d'),
-            'time': start_dt.strftime('%H:%M'),
-            'location': schedule_info.get('location', '')
-        }))
-        
+    # Redisにイベントデータを保存
+    if save_event_to_redis(event_id, event_data):
         logger.info(f"イベント通知をRedisに送信: event_id={event_id}")
         
         # ユーザーにフィードバックメッセージを送信
@@ -292,14 +317,14 @@ def process_plan_command(channel_id, user_id, team_id, text):
             )
         except SlackApiError as e:
             logger.error(f"Slackメッセージ送信エラー: {e}", exc_info=True)
-            
-    except Exception as e:
-        logger.error(f"Redis通知送信エラー: {e}", exc_info=True)
+    else:
+        # Redis通知が失敗した場合のフォールバック
         try:
+            # 直接ユーザーに予定情報を送信
             slack_client.chat_postEphemeral(
                 channel=channel_id,
                 user=user_id,
-                text="⚠️ 予定を検出しましたが、通知の送信に失敗しました。"
+                text=f"📅 予定を検出しました: {schedule_info['title']} @ {start_dt.strftime('%Y-%m-%d %H:%M')}\n⚠️ 通知センターへの送信に失敗しましたが、Googleカレンダーへの登録は可能です。"
             )
         except SlackApiError as e:
             logger.error(f"Slackメッセージ送信エラー: {e}", exc_info=True)
