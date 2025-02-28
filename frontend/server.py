@@ -4,6 +4,7 @@
 Redisを使用してバックエンドからの通知を受け取り、WebSocketを通じてブラウザに転送します
 """
 import os
+import sys
 import json
 import time
 import threading
@@ -62,7 +63,7 @@ def forward_to_desktop_client(data):
     """
     try:
         # デスクトップクライアントのエンドポイントにPOST
-        response = requests.post("http://localhost:5010/new_event", 
+        response = requests.post("http://localhost:5010/event", 
                                  json=data, 
                                  timeout=1)
         print(f"Desktop client response: {response.status_code}")
@@ -118,7 +119,7 @@ def approve_event(event_id):
     
     # バックエンドサーバーに承認リクエストを転送
     try:
-        response = requests.post(f"{BACKEND_URL}/approve_event", json=event_data)
+        response = requests.post(f"{BACKEND_URL}/api/events/{event_id}/approve", json=event_data)
         if response.status_code == 200:
             # イベント情報をRedisから削除
             redis_client.delete(f"event:{event_id}")
@@ -152,7 +153,7 @@ def deny_event(event_id):
     
     # バックエンドサーバーに拒否リクエストを転送
     try:
-        response = requests.post(f"{BACKEND_URL}/deny_event", json=event_data)
+        response = requests.post(f"{BACKEND_URL}/api/events/{event_id}/deny", json=event_data)
         if response.status_code == 200:
             # イベント情報をRedisから削除
             redis_client.delete(f"event:{event_id}")
@@ -185,7 +186,7 @@ def handle_disconnect():
         del connected_clients[client_id]
     print(f"Client disconnected: {client_id}")
 
-if __name__ == '__main__':
+def main():
     # Redisリスナーを別スレッドで開始
     redis_thread = threading.Thread(target=redis_listener, daemon=True)
     redis_thread.start()
@@ -195,5 +196,18 @@ if __name__ == '__main__':
     port = int(os.getenv('PORT', 5002))
     print(f"Starting notification server on {host}:{port}")
     
-    # SocketIOサーバーを起動
-    socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
+    # gunicornでの起動に適した形に変更
+    return socketio
+
+if __name__ == "__main__":
+    # これが重要な変更点です
+    socketio_app = main()
+    
+    # コマンドラインから直接起動する場合
+    socketio_app.run(
+        app, 
+        host='0.0.0.0', 
+        port=int(os.getenv('PORT', 5002)), 
+        debug=False, 
+        use_reloader=False
+    )
