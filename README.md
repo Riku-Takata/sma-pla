@@ -1,3 +1,4 @@
+<img width="1907" alt="スクリーンショット 2025 03 01 124512" src="[https://github.com/user-attachments/assets/609db646-a769-4cc2-ad31-e61a6a333a45](https://github.com/user-attachments/assets/fe27ea37-64ae-4fb8-9112-e7f828ee9e87)" />
 # NoMo: 自然な会話から予定を自動管理するスマートスケジュールシステム
 
 ## 🚀 プロダクト概要
