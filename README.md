@@ -1,7 +1,7 @@
-<img width="1907" alt="スクリーンショット 2025 03 01 124512" src="[https://github.com/user-attachments/assets/609db646-a769-4cc2-ad31-e61a6a333a45](https://github.com/user-attachments/assets/fe27ea37-64ae-4fb8-9112-e7f828ee9e87)" />
 # NoMo: 自然な会話から予定を自動管理するスマートスケジュールシステム
 
 ## 🚀 プロダクト概要
+![スクリーンショット 2025-03-01 124512](https://github.com/user-attachments/assets/af9a3692-bba3-40be-8f1b-1b0decb78ba0)
 
 NoMoは、チャットプラットフォーム上の自然な会話から予定を自動的に検出し、Googleカレンダーに登録する革新的なスケジュール管理システムです。面倒な手動入力を排除し、予定の見逃しやダブルブッキングを防ぐソリューションを提供します。
 
