@@ -44,7 +44,7 @@ app = Flask(__name__,
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Redisへの接続を試みる関数
-def connect_to_redis(max_retries=10, retry_interval=5):
+def connect_to_redis(max_retries=5, retry_interval=3):
     """
     Redisサーバーへの接続を試みる
     
@@ -65,10 +65,10 @@ def connect_to_redis(max_retries=10, retry_interval=5):
                 host = parts[0]
                 port = int(parts[1].split("/")[0])
                 logger.info(f"Redisに接続します: {host}:{port}")
-                client = redis.Redis(host=host, port=port, socket_timeout=10)
+                client = redis.Redis(host=host, port=port, socket_timeout=10, socket_connect_timeout=5)
             else:
                 # URL形式で接続
-                client = redis.from_url(REDIS_URL, socket_timeout=10)
+                client = redis.from_url(REDIS_URL, socket_timeout=10, socket_connect_timeout=5)
                 
             # 接続テスト
             client.ping()
@@ -94,17 +94,25 @@ def connect_to_redis(max_retries=10, retry_interval=5):
             else:
                 break
     
-    logger.error("Redisへの接続に失敗しました。フォールバックモードで実行します。")
+    logger.warning("Redisへの接続に失敗しました。Redis無しモードで実行します。")
     return None
 
 # Redisクライアントの初期化（再試行あり）
-redis_client = connect_to_redis()
+redis_client = None
+try:
+    redis_client = connect_to_redis()
+except Exception as e:
+    logger.error(f"Redis接続の初期化中にエラーが発生しました: {e}", exc_info=True)
+    logger.warning("Redis無しモードで実行します")
 
 # Redis利用ができるかどうかをチェック
 redis_available = redis_client is not None
 
 # 通知用のチャネル
 NOTIFICATION_CHANNEL = "smart_scheduler_notifications"
+
+# イベントメッセージをメモリに一時保存（Redis代替機能）
+memory_events = {}
 
 # 接続されたクライアント管理用
 connected_clients = {}
@@ -137,6 +145,10 @@ def redis_listener():
                     # デスクトップクライアントが存在すれば、そちらにも通知
                     if data.get('type') == 'event':
                         forward_to_desktop_client(data)
+                        
+                        # イベントデータをメモリにキャッシュ（Redis無しモード用）
+                        if 'event_id' in data:
+                            memory_events[data['event_id']] = data
                 except Exception as e:
                     logger.error(f"Error processing message: {e}", exc_info=True)
     except Exception as e:
@@ -182,24 +194,27 @@ def get_event(event_id):
     Returns:
         イベント情報のJSON
     """
-    # Redisが利用できない場合はバックエンドAPIを呼び出す
-    if not redis_available:
-        try:
-            response = requests.get(f"{BACKEND_URL}/api/events/{event_id}")
-            if response.status_code == 200:
-                return Response(response.content, mimetype='application/json')
-            else:
-                return jsonify({"status": "error", "message": "Event not found"}), 404
-        except Exception as e:
-            logger.error(f"Backend API error: {e}", exc_info=True)
-            return jsonify({"status": "error", "message": "Service unavailable"}), 503
+    # メモリキャッシュをまず確認
+    if event_id in memory_events:
+        logger.info(f"メモリからイベント情報を取得: {event_id}")
+        return jsonify(memory_events[event_id])
     
-    # Redisからイベント情報を取得
-    event_data = redis_client.get(f"event:{event_id}")
-    if not event_data:
-        return jsonify({"status": "error", "message": "Event not found"}), 404
+    # Redisが利用できる場合はRedisから取得
+    if redis_available:
+        event_data = redis_client.get(f"event:{event_id}")
+        if event_data:
+            return Response(event_data, mimetype='application/json')
     
-    return Response(event_data, mimetype='application/json')
+    # どちらも失敗した場合はバックエンドAPIを呼び出す
+    try:
+        response = requests.get(f"{BACKEND_URL}/api/events/{event_id}")
+        if response.status_code == 200:
+            return Response(response.content, mimetype='application/json')
+        else:
+            return jsonify({"status": "error", "message": "Event not found"}), 404
+    except Exception as e:
+        logger.error(f"Backend API error: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": "Service unavailable"}), 503
 
 @app.route('/api/event/<event_id>/approve', methods=['POST'])
 def approve_event(event_id):
@@ -212,26 +227,42 @@ def approve_event(event_id):
     Returns:
         処理結果のJSON
     """
-    # イベント情報の取得
-    if redis_available:
+    # メモリキャッシュからイベント情報を取得
+    event_data = None
+    if event_id in memory_events:
+        event_data = memory_events[event_id]
+    
+    # Redisから取得を試みる
+    if not event_data and redis_available:
         event_data_raw = redis_client.get(f"event:{event_id}")
-        if not event_data_raw:
-            return jsonify({"status": "error", "message": "Event not found"}), 404
-        
-        event_data = json.loads(event_data_raw)
-    else:
-        # Redisが利用できない場合はリクエストボディを使用
+        if event_data_raw:
+            try:
+                event_data = json.loads(event_data_raw)
+            except:
+                pass
+    
+    # それでもない場合はリクエストボディを使用
+    if not event_data:
         event_data = request.json
-        if not event_data:
-            return jsonify({"status": "error", "message": "No event data provided"}), 400
+    
+    # データのチェック
+    if not event_data:
+        return jsonify({"status": "error", "message": "No event data provided"}), 400
     
     # バックエンドサーバーに承認リクエストを転送
     try:
         response = requests.post(f"{BACKEND_URL}/api/events/{event_id}/approve", json=event_data)
         
-        # Redisが利用可能ならイベント情報を削除
-        if redis_available and response.status_code == 200:
-            redis_client.delete(f"event:{event_id}")
+        # 処理が成功したらメモリキャッシュから削除
+        if response.status_code == 200 and event_id in memory_events:
+            del memory_events[event_id]
+            
+        # Redisも利用可能ならRedisからも削除
+        if redis_available:
+            try:
+                redis_client.delete(f"event:{event_id}")
+            except:
+                pass
             
         return Response(response.content, status=response.status_code, mimetype='application/json')
     except Exception as e:
@@ -249,31 +280,73 @@ def deny_event(event_id):
     Returns:
         処理結果のJSON
     """
-    # イベント情報の取得
-    if redis_available:
+    # メモリキャッシュからイベント情報を取得
+    event_data = None
+    if event_id in memory_events:
+        event_data = memory_events[event_id]
+    
+    # Redisから取得を試みる
+    if not event_data and redis_available:
         event_data_raw = redis_client.get(f"event:{event_id}")
-        if not event_data_raw:
-            return jsonify({"status": "error", "message": "Event not found"}), 404
-        
-        event_data = json.loads(event_data_raw)
-    else:
-        # Redisが利用できない場合はリクエストボディを使用
+        if event_data_raw:
+            try:
+                event_data = json.loads(event_data_raw)
+            except:
+                pass
+    
+    # それでもない場合はリクエストボディを使用
+    if not event_data:
         event_data = request.json
-        if not event_data:
-            return jsonify({"status": "error", "message": "No event data provided"}), 400
+    
+    # データのチェック
+    if not event_data:
+        return jsonify({"status": "error", "message": "No event data provided"}), 400
     
     # バックエンドサーバーに拒否リクエストを転送
     try:
         response = requests.post(f"{BACKEND_URL}/api/events/{event_id}/deny", json=event_data)
         
-        # Redisが利用可能ならイベント情報を削除
-        if redis_available and response.status_code == 200:
-            redis_client.delete(f"event:{event_id}")
+        # 処理が成功したらメモリキャッシュから削除
+        if response.status_code == 200 and event_id in memory_events:
+            del memory_events[event_id]
+            
+        # Redisも利用可能ならRedisからも削除
+        if redis_available:
+            try:
+                redis_client.delete(f"event:{event_id}")
+            except:
+                pass
             
         return Response(response.content, status=response.status_code, mimetype='application/json')
     except Exception as e:
         logger.error(f"Backend API error: {e}", exc_info=True)
         return jsonify({"status": "error", "message": f"Service unavailable: {str(e)}"}), 503
+
+# Redis無しモード用のHTTP通知エンドポイント
+@app.route('/api/notification', methods=['POST'])
+def receive_notification():
+    """
+    バックエンドからHTTP通知を受け取るエンドポイント
+    Redis無しモードで使用
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    logger.info(f"HTTP通知を受信: {data}")
+    
+    # イベントデータをメモリにキャッシュ（必要に応じて）
+    if data.get('type') == 'event' and 'event_id' in data:
+        memory_events[data['event_id']] = data
+    
+    # SocketIOを通じてブラウザクライアントに通知
+    socketio.emit('notification', data)
+    
+    # デスクトップクライアントにも通知（必要に応じて）
+    if data.get('type') == 'event':
+        forward_to_desktop_client(data)
+    
+    return jsonify({"status": "ok"})
 
 # サーバーステータス確認エンドポイント
 @app.route('/health')
@@ -282,7 +355,9 @@ def health_check():
     status = {
         "status": "healthy",
         "redis_connected": redis_available,
-        "time": time.strftime("%Y-%m-%d %H:%M:%S")
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "memory_events_count": len(memory_events),
+        "connected_clients": len(connected_clients)
     }
     return jsonify(status)
 
@@ -315,7 +390,8 @@ def main():
         redis_thread.start()
         logger.info("Redisリスナーを開始しました")
     else:
-        logger.warning("Redisに接続できないため、通知機能は制限されます")
+        logger.warning("Redisに接続できないため、Redis無しモードで動作します")
+        logger.info("HTTP通知エンドポイントを使用してバックエンドと通信します")
     
     # サーバーのホストとポートを設定
     host = '0.0.0.0'
