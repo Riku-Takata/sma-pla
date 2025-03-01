@@ -5,7 +5,7 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly no --save ""  # 無効なオプションを削除
+    command: redis-server --appendonly no --save ""
     networks:
       - app-network
     restart: always
@@ -26,6 +26,7 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - DOCKER_ENV=True
     volumes:
       - ./backend:/app
     depends_on:
@@ -34,6 +35,12 @@ services:
     restart: always
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   notification:
     build: 
@@ -46,6 +53,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - BACKEND_URL=http://web:5001
+      - DOCKER_ENV=True
     volumes:
       - ./frontend:/app
     depends_on:
@@ -79,6 +87,10 @@ services:
 networks:
   app-network:
     driver: bridge
+    # 固定のサブネットを指定する（オプション）
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   redis-data:
