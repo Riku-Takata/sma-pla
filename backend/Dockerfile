@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 環境変数の設定
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
-ENV FLASK_APP=src/app.py
+ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
 
 # requirements.txtをコピーして依存関係をインストール
@@ -25,5 +25,5 @@ COPY backend/ .
 # ポートを公開
 EXPOSE 5001
 
-# コンテナ起動時のコマンド
-CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "4", "--timeout", "120", "src.app:app"]
+# コンテナ起動時のコマンド (修正: src.app:app -> app:app)
+CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "4", "--timeout", "120", "app:app"]

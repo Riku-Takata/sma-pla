@@ -26,9 +26,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 環境変数からRedis URLとバックエンドAPIのURLを取得
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5001")
+# Docker環境ではredisサービス名を使用、それ以外ではlocalhost
+is_docker = os.getenv("DOCKER_ENV", "False").lower() in ("true", "1", "t", "yes")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0" if is_docker else "redis://localhost:6379/0")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://web:5001" if is_docker else "http://localhost:5001")
 PORT = int(os.getenv("PORT", 5002))
+
+# Redisの接続先をログに出力 (診断用)
+logger.info(f"Redis接続URL: {REDIS_URL}")
+logger.info(f"バックエンドURL: {BACKEND_URL}")
+logger.info(f"Docker環境: {'はい' if is_docker else 'いいえ'}")
 
 # Flaskアプリケーションの設定
 app = Flask(__name__, 
@@ -37,7 +44,7 @@ app = Flask(__name__,
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Redisへの接続を試みる関数
-def connect_to_redis(max_retries=5, retry_interval=3):
+def connect_to_redis(max_retries=10, retry_interval=5):
     """
     Redisサーバーへの接続を試みる
     
@@ -51,7 +58,18 @@ def connect_to_redis(max_retries=5, retry_interval=3):
     for attempt in range(max_retries):
         try:
             logger.info(f"Redisへの接続を試行しています ({attempt+1}/{max_retries})...")
-            client = redis.from_url(REDIS_URL)
+            # host, portを明示的に指定してみる
+            if "redis://" in REDIS_URL:
+                # redis://redis:6379/0 形式のURLからホスト名を抽出
+                parts = REDIS_URL.replace("redis://", "").split(":")
+                host = parts[0]
+                port = int(parts[1].split("/")[0])
+                logger.info(f"Redisに接続します: {host}:{port}")
+                client = redis.Redis(host=host, port=port, socket_timeout=10)
+            else:
+                # URL形式で接続
+                client = redis.from_url(REDIS_URL, socket_timeout=10)
+                
             # 接続テスト
             client.ping()
             logger.info(f"Redisに接続しました: {REDIS_URL}")
@@ -63,7 +81,18 @@ def connect_to_redis(max_retries=5, retry_interval=3):
                 time.sleep(retry_interval)
         except Exception as e:
             logger.error(f"Redisクライアント初期化エラー: {e}", exc_info=True)
-            break
+            # IPアドレス名前解決を試す
+            if "redis" in REDIS_URL:
+                import socket
+                try:
+                    redis_ip = socket.gethostbyname("redis")
+                    logger.info(f"Redis名前解決結果: redis -> {redis_ip}")
+                except socket.gaierror:
+                    logger.error("Redis名前解決に失敗しました")
+            if attempt < max_retries - 1:
+                time.sleep(retry_interval)
+            else:
+                break
     
     logger.error("Redisへの接続に失敗しました。フォールバックモードで実行します。")
     return None
@@ -89,6 +118,7 @@ def redis_listener():
         logger.warning("Redisに接続できないため、リスナーを開始できません")
         return
     
+    # pubsubオブジェクトを作成し、チャンネルを購読
     pubsub = redis_client.pubsub()
     pubsub.subscribe(NOTIFICATION_CHANNEL)
     

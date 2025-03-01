@@ -12,6 +12,12 @@ import logging
 import time
 from datetime import datetime, timedelta
 
+# 相対インポートからの修正 - 絶対インポートに変更
+import sys
+from pathlib import Path
+# プロジェクトルートを明示的にPythonパスに追加
+sys.path.insert(0, str(Path(__file__).parent))
+
 from src.config import Config
 from src.utils.db import db
 from src.models.user import User, UserPlatformLink
@@ -62,8 +68,11 @@ def create_app(test_config=None):
         db.create_all()
     
     # Redisクライアントの設定と初期化
-    redis_url = app.config.get('REDIS_URL', 'redis://localhost:6379/0')
+    redis_url = app.config.get('REDIS_URL', 'redis://redis:6379/0')
     notification_channel = app.config.get('NOTIFICATION_CHANNEL', 'smart_scheduler_notifications')
+    
+    # Redis接続情報をログに出力 (診断用)
+    logger.info(f"Redis接続URL: {redis_url}")
 
     # Redis接続を試行する関数
     def init_redis_client(max_retries=5, retry_interval=3):
@@ -303,35 +312,3 @@ if __name__ == "__main__":
     # ローカル開発用の起動コード
     port = int(os.getenv('PORT', 5001))
     app.run(host="0.0.0.0", port=port, debug=app.config.get("DEBUG", False))
-
-"""
-Redisの設定と接続を管理するモジュール
-"""
-import os
-import redis
-
-def get_redis_client():
-    """
-    環境変数から設定を読み取り、Redisクライアントを作成する
-    
-    Returns:
-        redis.Redis: Redisクライアントインスタンス
-    """
-    try:
-        # 環境変数から接続情報を取得
-        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-        
-        # Redisクライアントを作成
-        redis_client = redis.from_url(redis_url)
-        
-        # 接続テスト
-        redis_client.ping()
-        
-        return redis_client
-    
-    except Exception as e:
-        print(f"Redis接続エラー: {e}")
-        return None
-
-# グローバル変数としてRedisクライアントを作成
-redis_client = get_redis_client()
