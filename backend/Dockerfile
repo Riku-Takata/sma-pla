@@ -14,6 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
+ENV PYTHONPATH=/app
 
 # requirements.txtをコピーして依存関係をインストール
 COPY backend/requirements.txt .
@@ -25,5 +26,8 @@ COPY backend/ .
 # ポートを公開
 EXPOSE 5001
 
-# コンテナ起動時のコマンド (修正: src.app:app -> app:app)
-CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "4", "--timeout", "120", "app:app"]
+# Debug: コンテナ内のファイル構造を確認するコマンド
+RUN echo "Current directory contents:" && ls -la
+
+# 重要な修正: app:appを指定して直接Pythonで実行
+CMD ["python", "app.py"]
