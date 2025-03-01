@@ -1,185 +1,136 @@
-# スマート予定管理ボット
+# NoMo: 自然な会話から予定を自動管理するスマートスケジュールシステム
 
-Slack上の会話から予定を自動的に検出し、Googleカレンダーに登録するボットアプリケーションです。
+## 🚀 プロダクト概要
 
-## 特徴
+NoMoは、チャットプラットフォーム上の自然な会話から予定を自動的に検出し、Googleカレンダーに登録する革新的なスケジュール管理システムです。面倒な手動入力を排除し、予定の見逃しやダブルブッキングを防ぐソリューションを提供します。
 
-- Slack上の会話から予定情報を自動的に抽出
-- Google Calendarとの連携による予定の自動登録
-- ダブルブッキングの検出と代替時間の提案
-- 自然言語処理による柔軟な予定認識
+### 💡 課題とソリューション
 
-## 技術スタック
+**課題:**
+- 予定管理ツールの手動入力の煩わしさ
+- 予定の把握し忘れ
+- ダブルブッキングの発生
+- 複数のコミュニケーションプラットフォーム間での予定同期の困難さ
 
+**NoMoのソリューション:**
+- チャットメッセージから自動的に予定を抽出
+- 自然言語処理と機械学習による高精度な予定検出
+- マルチプラットフォーム対応（Slack、LINE、Discord、Microsoft Teams）
+- Google Calendarとのシームレスな連携
+- リアルタイムの予定重複検知と代替案の提示
+
+## 🌟 主な機能
+
+1. **自動予定検出**
+   - チャットメッセージから日時、場所、タイトルを自動抽出
+   - OpenAI GPTを活用した高度な自然言語処理
+   - 曖昧な表現（「来週の月曜日」「夕方」など）の柔軟な解釈
+
+2. **マルチプラットフォーム対応**
+   - Slack、LINE、Discord、Microsoft Teamsに対応
+   - 各プラットフォームのAPIと連携
+   - プラットフォーム横断的な予定管理
+
+3. **インテリジェントな予定登録**
+   - ダブルブッキング自動検知
+   - 重複時に代替時間を自動提案
+   - ユーザー承認フロー
+
+4. **リアルタイム通知システム**
+   - デスクトップ通知
+   - ブラウザ通知センター
+   - WebSocket・Redisによるリアルタイム更新
+
+## 🔧 技術スタック
+
+### バックエンド
 - Python 3.12
-- Flask (Webフレームワーク)
-- SQLAlchemy (ORM)
-- Slack API
+- Flask
+- SQLAlchemy
 - Google Calendar API
-- OpenAI API (オプション) - 自然言語解析の拡張
-- Docker & Docker Compose
-- ngrok (開発環境でのトンネリング)
+- OpenAI API
+- Redis
 
-## Dockerを使用したセットアップ（推奨）
+### フロントエンド
+- JavaScript (Socket.IO)
+- PyQt5（デスクトップクライアント）
+- WebSocket
 
-### 1. リポジトリをクローン
+### インフラ
+- Docker
+- Docker Compose
+- ngrok
+- Gunicorn
 
+## 📊 技術的な革新性
+
+1. **自然言語処理**
+   - OpenAI GPTを活用した高度な予定情報抽出
+   - マルチモーダルな言語理解
+   - コンテキストを考慮した予定解析
+
+2. **モジュラーアーキテクチャ**
+   - プラグイン型のプラットフォーム対応
+   - 拡張性の高いマイクロサービス設計
+   - 各コンポーネントの疎結合
+
+3. **耐障害性**
+   - フォールバックメカニズム
+   - 自動再接続
+   - 分散システムの堅牢性
+
+## 🎯 ターゲットユーザー
+
+- 多忙なビジネスパーソン
+- リモートワーカー
+- チーム協働に依存する組織
+- 複数のコミュニケーションツールを利用するユーザー
+
+## 🚀 今後の展望
+
+- より多くのメッセージングプラットフォームのサポート
+- 機械学習モデルの継続的な改善
+- カスタマイズ可能な予定抽出ルール
+- エンタープライズ向けの高度な機能
+
+## 🏆 ハッカソンでの挑戦
+
+本プロジェクトでは、以下の技術的チャレンジに取り組みました：
+
+1. 複雑な自然言語処理
+2. マルチプラットフォーム統合
+3. リアルタイム分散システムの設計
+4. 高い拡張性と保守性の実現
+
+## インストールと使用方法
+
+### 必要な環境
+- Docker
+- Docker Compose
+- Python 3.12+
+- ngrok アカウント
+
+### セットアップ手順
 ```bash
-git clone https://github.com/yourusername/smart-schedule-bot.git
-cd smart-schedule-bot
-```
+# リポジトリをクローン
+git clone https://github.com/yourusername/nomo-schedule-manager.git
+cd nomo-schedule-manager
 
-### 2. 環境変数の設定
-
-`.env.example`ファイルを`.env`にコピーし、必要な環境変数を設定します。
-
-```bash
+# .env.exampleを.envにコピーし、必要な設定を行う
 cp .env.example .env
-# .envファイルを編集して各API情報を入力
+
+# Docker Composeで起動
+./startup.py
 ```
 
-### 3. Dockerを使ってアプリケーションを起動
+## ライセンス
 
-#### macOS/Linux:
-```bash
-# 実行権限を付与
-chmod +x startup.sh
+MIT License
 
-# スタートアップスクリプトを実行
-./startup.sh
-```
+## 開発チーム
 
-#### Windows:
-```
-# スタートアップバッチファイルを実行
-start.bat
-```
+NoMo Development Team - 予定管理の未来を創造する革新者たち
 
-または直接PowerShellで:
-```powershell
-powershell -ExecutionPolicy Bypass -File startup.ps1
-```
+---
 
-スクリプトはngrokのURLを自動的に取得し、Slack APIの設定に必要なURLを表示します。
-
-### 4. Slack Appの設定
-
-スクリプトが表示したURLを以下の設定に使用します：
-
-1. **Event Subscriptions URL**:
-   - `https://NGROK_URL/webhook/slack/events`
-
-2. **Slash Commands URL**:
-   - `https://NGROK_URL/webhook/slack/command`
-
-3. **Interactive Components URL**:
-   - `https://NGROK_URL/webhook/slack/interactive`
-
-### 5. Google OAuth設定
-
-1. Google Cloud Consoleで認証情報を設定
-2. リダイレクトURIに `https://NGROK_URL/oauth/google/callback` を追加
-
-## 手動セットアップ
-
-### 1. 依存パッケージのインストール
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. ngrokを起動
-
-```bash
-ngrok http 5001
-```
-
-### 3. 環境変数を設定
-
-```bash
-# .envファイルの設定
-FRONTEND_URL=https://NGROK_URL
-GOOGLE_REDIRECT_URI=https://NGROK_URL/oauth/google/callback
-```
-
-### 4. アプリケーション起動
-
-```bash
-flask run --host=0.0.0.0 --port=5001
-```
-
-## Slack Appの設定手順
-
-1. [Slack API Dashboard](https://api.slack.com/apps)にアクセス
-2. **Create New App** > **From scratch**をクリック
-3. アプリ名とワークスペースを選択
-4. 以下の設定を行います：
-
-   **a. OAuth & Permissions**
-   - Bot Token Scopesに以下を追加：
-     - `channels:history`
-     - `chat:write`
-     - `commands`
-     - `groups:history`
-     - `im:history`
-     - `users:read`
-     - `users:read.email`
-
-   **b. Slash Commands**
-   - Command: `/plan`
-   - Request URL: `https://NGROK_URL/webhook/slack/command`
-   - Description: "会話から予定を検出してGoogleカレンダーに追加"
-
-   **c. Event Subscriptions**
-   - Request URL: `https://NGROK_URL/webhook/slack/events`
-   - Subscribe to bot events: `message.channels`, `message.groups`, `message.im`
-
-   **d. Interactivity & Shortcuts**
-   - Request URL: `https://NGROK_URL/webhook/slack/interactive`
-
-5. ワークスペースにアプリをインストール
-
-## 使い方
-
-### Slack上での使用方法
-
-1. ワークスペース上で `/plan` コマンドを入力
-2. 初回利用時はGoogleアカウントとの連携が必要です（表示されるリンクから認証）
-3. 会話履歴から自動的に予定が検出され、確認ダイアログが表示されます
-4. 確認後、Googleカレンダーに予定が登録されます
-5. 予定の重複がある場合は通知され、代替の時間を提案します
-
-具体例:
-
-```
-あなた: 明日の15時からプロジェクトMTGやりましょう
-同僚: 了解です、場所は会議室でよいですか？
-あなた: はい、Aルームで
-あなた: /plan
-```
-
-上記の会話から自動的に「プロジェクトMTG」の予定を検出し、カレンダーに登録します。
-
-## トラブルシューティング
-
-### ngrokのURLが取得できない場合
-
-```bash
-# ngrokのAPIに直接アクセス
-curl http://localhost:4040/api/tunnels
-
-# または、Docker内のngrokコンテナ内部から確認
-docker-compose exec ngrok /bin/sh -c 'curl http://localhost:4040/api/tunnels'
-```
-
-### Slackイベント検証に失敗する場合
-
-1. ngrokのURLが正しく設定されているか確認
-2. Flaskアプリケーションのログを確認：
-   ```bash
-   docker-compose logs -f web
-   ```
-3. イベントペイロードを確認：
-   ```bash
-   # slack_handler.pyの/eventsエンドポイントにデバッグログを追加
-   ```
+🌈 **NoMo: 予定管理を、より自然に、よりスマートに。**
